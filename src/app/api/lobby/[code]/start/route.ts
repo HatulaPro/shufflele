@@ -1,7 +1,7 @@
 import type { NextRequest, NextResponse } from 'next/server';
 import { fail, json } from '@/lib/http';
 import { findItunesMatch } from '@/lib/itunes';
-import { fillPopularity } from '@/lib/deezer';
+import { applyCachedPopularity, fillPopularity } from '@/lib/deezer';
 import { loadTracks, randomToken, requireHost, saveLobby, saveRound, saveTracks } from '@/lib/lobby';
 import { parFor } from '@/lib/par';
 import { consumeGameCredit, refundGameCredit } from '@/lib/ratelimit';
@@ -51,8 +51,15 @@ export async function POST(_req: NextRequest, ctx: Ctx): Promise<NextResponse> {
   // divided by how many playlists there turn out to be, and players arrive one
   // at a time. Everything not drawn stays in Redis for the guess-modal search.
   if (!pool.some((track) => track.pooled)) {
-    const pooled = samplePool(pool);
-    await fillPopularity(pooled, POPULARITY_BUDGET_MS);
+    // Cache first, over the whole tracklist: anything a previous lobby already
+    // scored gets pooled for free, and the Deezer budget is spent only on
+    // tracks the cache couldn't answer. lib/deezer.ts, lib/select.ts.
+    const resolved = await applyCachedPopularity(pool);
+    const pooled = samplePool(pool, resolved);
+    await fillPopularity(
+      pooled.filter((track) => !resolved.has(track.spotifyId)),
+      POPULARITY_BUDGET_MS,
+    );
     await saveTracks(code, pool);
   }
 

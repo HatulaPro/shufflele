@@ -65,7 +65,7 @@ export function artistsLabel(track: Track): string {
 }
 
 function rowLabel(row: LadderRow, index: number): { label: string; sub: string } {
-  if (row.kind === 'final') return { label: 'Final guess', sub: 'last chance, nothing new' };
+  if (row.kind === 'final') return { label: 'Final guess', sub: 'last chance' };
   return {
     label: index === 0 ? STEM_LABEL[row.stem] : `+ ${STEM_LABEL[row.stem]}`,
     sub: '',
@@ -94,6 +94,13 @@ function rowsFor(round: Round, ladder: LadderRow[]): PublicRow[] {
       : !over && round.state === 'playing' && index === round.currentRow
         ? 'active'
         : 'locked';
+
+    // The final row does get one new thing after all: a lyric hint, revealed
+    // only once the row is live. The hint never contains a title word
+    // (lib/lyrics.ts), so serving it leaks nothing the reveal wouldn't.
+    if (row.kind === 'final' && state === 'active' && round.hint) {
+      sub = `Hint: “${round.hint}”`;
+    }
 
     return { index, kind: row.kind, label, sub, state, guess };
   });

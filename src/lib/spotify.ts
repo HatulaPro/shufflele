@@ -1,3 +1,4 @@
+import { PLAYLIST_TTL_SECONDS, keys, redis } from './redis';
 import type { Artist, Track } from './types';
 
 /**
@@ -87,11 +88,27 @@ export type IngestedPlaylist = { playlistId: string; playlistName: string; track
  *
  * `contributor` is the guest's name — the clue and the "same playlist" guess
  * tier both name the person, not the playlist. SPEC §1.5.
+ *
+ * The whole result — embed read plus the Web API metadata pass — is cached in
+ * Redis for a few minutes, because the same playlist is often ingested more
+ * than once in quick succession (a re-join, or friends sharing a playlist
+ * across lobbies), and every ingest is one more hit on an undocumented embed
+ * page we'd rather not lean on. The TTL is short since playlists get edited;
+ * see PLAYLIST_TTL_SECONDS. The contributor is stamped per caller, never
+ * cached.
  */
 export async function ingestPlaylist(
   playlistId: string,
   contributor: string,
 ): Promise<IngestedPlaylist> {
+  const cached = await readPlaylistCache(playlistId);
+  if (cached) {
+    return {
+      ...cached,
+      tracks: cached.tracks.map((t) => ({ ...t, contributor })),
+    };
+  }
+
   const entity = await fetchEmbedEntity(playlistId);
   const playlistName = entity.name?.trim() || 'Untitled playlist';
 
@@ -151,7 +168,36 @@ export async function ingestPlaylist(
     track.albumType = extra.albumType;
   }
 
-  return { playlistId, playlistName, tracks };
+  const result: IngestedPlaylist = { playlistId, playlistName, tracks };
+  await writePlaylistCache(result);
+  return result;
+}
+
+// --- cross-lobby cache -------------------------------------------------------
+
+/**
+ * Cached with an empty contributor, since that's the one per-caller field;
+ * `ingestPlaylist` stamps the real name on the way out. Cache errors are
+ * swallowed on both sides — a broken cache means a normal, slower ingest.
+ */
+async function readPlaylistCache(playlistId: string): Promise<IngestedPlaylist | null> {
+  try {
+    return await redis().get<IngestedPlaylist>(keys.playlist(playlistId));
+  } catch {
+    return null;
+  }
+}
+
+async function writePlaylistCache(result: IngestedPlaylist): Promise<void> {
+  try {
+    await redis().set(
+      keys.playlist(result.playlistId),
+      { ...result, tracks: result.tracks.map((t) => ({ ...t, contributor: '' })) },
+      { ex: PLAYLIST_TTL_SECONDS },
+    );
+  } catch {
+    // The next ingest of this playlist just does the full read again.
+  }
 }
 
 async function fetchEmbedEntity(playlistId: string): Promise<EmbedEntity> {

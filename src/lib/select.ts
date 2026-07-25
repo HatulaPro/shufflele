@@ -20,22 +20,26 @@ const UNIFORM_MIX = 0.1;
 const REF_QUANTILE = 0.9;
 
 /**
- * How many tracks the whole lobby draws from, split evenly across playlists.
+ * How many *Deezer lookups* the whole lobby spends, split evenly across
+ * playlists. This is a budget on work, not on pool size: a track whose
+ * popularity is already in the cross-lobby cache (lib/deezer.ts) costs
+ * nothing and is always pooled, so a lobby full of playlists that have been
+ * played before pools everything for the same 25s ceiling.
  *
- * Fixed in total rather than per playlist because the cost this bounds is a
- * per-track Deezer lookup (lib/deezer.ts), and that cost is per lobby, not per
- * player. A two-player lobby would otherwise pay a fifth of what a ten-player
- * one does for the same 25s budget.
+ * Pool size itself needs no cap: `pickSecret` draws the playlist uniformly
+ * before it ever looks at tracks, so a fully-pooled playlist is heard no more
+ * often than a thinly-sampled one.
  *
- * The per-playlist cap keeps a small lobby from leaning on one playlist's
- * entire tracklist, which would make that player's contribution obvious.
+ * Fixed in total rather than per playlist because the cost this bounds is per
+ * lobby, not per player. A two-player lobby would otherwise pay a fifth of
+ * what a ten-player one does for the same budget.
  *
  * 150 is set by the lookup budget, not by the game: the paced Deezer fleet
- * resolves ~8 tracks a second, so a full pool lands in ~18s against a 25s
+ * resolves ~8 tracks a second, so a cold pool lands in ~18s against a 25s
  * ceiling. At 5 rounds a day it is more secrets than a lobby can ever spend.
  */
-const POOL_TOTAL = 150;
-const POOL_MAX_PER_PLAYLIST = 50;
+const LOOKUP_TOTAL = 150;
+const LOOKUP_MAX_PER_PLAYLIST = 50;
 
 /**
  * Uniform in [0, 1). Six bytes is 2^48 buckets — far more resolution than the
@@ -125,17 +129,23 @@ function shuffled<T>(items: T[]): T[] {
 /**
  * Mark the tracks the lobby will actually draw secrets from, in place.
  *
- * Sampling is uniform inside each playlist — popularity isn't known yet, since
- * it's the *pooled* tracks that get looked up, not the other way round. The
- * popularity weighting in `pickSecret` then applies within the sample.
+ * `resolved` holds the ids whose popularity the cross-lobby cache already
+ * answered (see `applyCachedPopularity`). Those tracks cost no Deezer lookup,
+ * so every one of them is pooled unconditionally; the lookup quota is spent
+ * only on tracks that still need a search. With an empty set this degrades to
+ * exactly the old behaviour: quota tracks per playlist, all needing lookups.
+ *
+ * Sampling is uniform inside each playlist; the popularity weighting in
+ * `pickSecret` then applies within the sample.
  *
  * Called once, at the first round, because the per-playlist quota can't be
  * known at join time: players arrive one at a time and the divisor is how many
  * of them there turn out to be.
  *
- * Returns the pooled tracks, which are the ones worth enriching.
+ * Returns the pooled tracks; the ones not in `resolved` are the ones worth
+ * sending to Deezer.
  */
-export function samplePool(tracks: Track[]): Track[] {
+export function samplePool(tracks: Track[], resolved: ReadonlySet<string>): Track[] {
   const byPlaylist = new Map<string, Track[]>();
   for (const track of tracks) {
     track.pooled = false;
@@ -146,14 +156,24 @@ export function samplePool(tracks: Track[]): Track[] {
 
   if (byPlaylist.size === 0) return [];
 
-  const quota = Math.min(
-    POOL_MAX_PER_PLAYLIST,
-    Math.max(1, Math.floor(POOL_TOTAL / byPlaylist.size)),
+  const lookupQuota = Math.min(
+    LOOKUP_MAX_PER_PLAYLIST,
+    Math.max(1, Math.floor(LOOKUP_TOTAL / byPlaylist.size)),
   );
 
   const pooled: Track[] = [];
   for (const group of byPlaylist.values()) {
-    for (const track of shuffled(group).slice(0, quota)) {
+    let lookups = 0;
+
+    for (const track of shuffled(group)) {
+      const needsLookup = !resolved.has(track.spotifyId);
+      if (needsLookup) {
+        // Over the lookup budget: skip, but keep scanning — a resolved track
+        // further down the shuffle still rides for free.
+        if (lookups >= lookupQuota) continue;
+        lookups++;
+      }
+
       track.pooled = true;
       pooled.push(track);
     }

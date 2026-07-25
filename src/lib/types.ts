@@ -133,6 +133,13 @@ export type Round = {
   ladder: LadderRow[] | null;
   /** 1-based index of the row awaiting a guess. */
   currentRow: number;
+  /**
+   * Lyric hint shown on the final row: a random line from the song sharing no
+   * distinctive word with the title or artist (lib/lyrics.ts). Fetched once,
+   * one row before the final row unlocks. Absent = not fetched yet; null =
+   * lyrics.ovh had nothing usable. Never carries the title — safe to serve.
+   */
+  hint?: string | null;
   guesses: GuessLog[];
   createdAt: number;
   /** Last time we polled Replicate directly (webhook fallback). */

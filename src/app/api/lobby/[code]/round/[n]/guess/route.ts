@@ -1,6 +1,7 @@
 import type { NextRequest, NextResponse } from 'next/server';
 import { fail, json } from '@/lib/http';
 import { loadRound, loadTracks, requireHost, saveRound } from '@/lib/lobby';
+import { findLyricHint } from '@/lib/lyrics';
 import { artistsLabel, buildLadder, tierFor, toPublicRound } from '@/lib/round';
 import { missingStems } from '@/lib/separation';
 import type { GuessLog } from '@/lib/types';
@@ -87,6 +88,18 @@ export async function POST(req: NextRequest, ctx: Ctx): Promise<NextResponse> {
   } else {
     // Burning a row unlocks the next one, adding another stem to the mix.
     round.currentRow = row + 1;
+  }
+
+  // The final row shows a lyric hint (SPEC §1.3). Fetched one row early so the
+  // guess that unlocks the final row doesn't wait on lyrics.ovh, and stored on
+  // the round so it never changes between polls. Null (no match, timeout) is
+  // stored too — the row falls back to its plain label, and we don't retry.
+  if (
+    round.state === 'playing' &&
+    round.hint === undefined &&
+    round.currentRow >= round.ladder.length - 1
+  ) {
+    round.hint = await findLyricHint(round.secret);
   }
 
   await saveRound(round);

@@ -74,9 +74,18 @@ row per stem plus a final row:
 | 1 | Drums | drums only |
 | 2 | + Bass | drums + bass |
 | 3 | + Other | full instrumental (everything but vocals) |
-| 4 | Final guess | last chance, no new information |
+| 4 | Final guess | last chance + a lyric hint |
 
 Guessing on row 1 is the maximum score. Burning the last row is a loss.
+
+**The final row shows a lyric hint**: one random line of the song's lyrics, from lyrics.ovh (no
+token, no auth). Any line containing a distinctive word of the title or the primary artist's name
+is excluded — for *Cruel Summer*, no line with "cruel" or "summer" (prefix-matched, so "summers"
+counts too), with stopwords like "the" exempt so a title like *The Man* only bans "man". The line
+is fetched server-side one row before the final row unlocks and stored on the round, so it never
+changes between polls and the client never sees anything derived from the title. When lyrics.ovh
+has no match, times out, or every line would give the song away, the row falls back to its plain
+"last chance" label — the hint is decoration, never load-bearing.
 
 **Par** is the row you're expected to get it by, shown in the header as `Medium · par 3` and
 restated on the result screen (`2 rows used — par 3`). It is display-and-scoring only — it never

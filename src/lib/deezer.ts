@@ -1,4 +1,10 @@
 import { coreTitle, looseSimilarity, normalize } from './normalize';
+import {
+  POPULARITY_MISS_TTL_SECONDS,
+  POPULARITY_TTL_SECONDS,
+  keys,
+  redis,
+} from './redis';
 import type { Track } from './types';
 
 /**
@@ -122,14 +128,14 @@ function bestMatch(track: Track, results: DeezerTrack[]): number | null {
 }
 
 /**
- * One search. Returns the rank, or null for "no usable answer" — an unmatched
- * track, a quota refusal that survived its retry, or a network blip.
+ * One search. Returns the rank, 'unmatched' when Deezer answered but nothing
+ * cleared the similarity bars, or null for "no usable answer" — a quota
+ * refusal that survived its retry, or a network blip.
  *
- * Deliberately not distinguishing those: every one of them means the same
- * thing downstream, and an ingest must never fail because a third party had a
- * bad second.
+ * Downstream both non-ranks leave `popularity` null; the split only matters to
+ * the cache, which may remember a real absence but not a bad second.
  */
-async function rankFor(track: Track, signal: AbortSignal): Promise<number | null> {
+async function rankFor(track: Track, signal: AbortSignal): Promise<number | 'unmatched' | null> {
   const artist = track.artists[0]?.name ?? '';
   const url = `${DEEZER_SEARCH}?limit=5&q=${encodeURIComponent(`${artist} ${track.title}`)}`;
 
@@ -152,7 +158,7 @@ async function rankFor(track: Track, signal: AbortSignal): Promise<number | null
       continue;
     }
 
-    return bestMatch(track, body.data ?? []);
+    return bestMatch(track, body.data ?? []) ?? 'unmatched';
   }
 
   return null;
@@ -162,8 +168,81 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// --- cross-lobby cache -------------------------------------------------------
+
 /**
- * Fill `popularity` on the given tracks, in place, within a time budget.
+ * Scores are global facts about a track, not lobby state, so they're cached in
+ * Redis across lobbies: the second game to pool a song skips its Deezer search
+ * entirely. A confirmed miss is stored as -1 (with a much shorter TTL) so a
+ * track Deezer doesn't know isn't re-searched by every lobby that pools it.
+ *
+ * Both helpers swallow Redis errors — the cache losing a round means a slower
+ * start, never a failed one.
+ */
+const MISS = -1;
+
+/**
+ * Apply cached scores to the given tracks, in place, and return the ids the
+ * cache had an answer for — including known misses, since those tracks need no
+ * Deezer search either (a lookup would just fail again).
+ *
+ * This runs over the *whole* tracklist, before pooling, precisely so pooling
+ * can treat resolved tracks as free: the Deezer budget caps lookups, and a
+ * cache hit isn't one. One MGET regardless of size.
+ */
+export async function applyCachedPopularity(tracks: Track[]): Promise<Set<string>> {
+  const cached = await readPopularityCache(tracks);
+
+  const resolved = new Set<string>();
+  for (const track of tracks) {
+    const score = cached.get(track.spotifyId);
+    if (score === undefined) continue;
+    resolved.add(track.spotifyId);
+    if (score !== MISS) track.popularity = score;
+  }
+  return resolved;
+}
+
+async function readPopularityCache(tracks: Track[]): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  if (tracks.length === 0) return out;
+
+  try {
+    const cached = await redis().mget<(number | null)[]>(
+      ...tracks.map((t) => keys.popularity(t.spotifyId)),
+    );
+    tracks.forEach((track, i) => {
+      const value = cached[i];
+      if (typeof value === 'number') out.set(track.spotifyId, value);
+    });
+  } catch {
+    // Cold cache; every track just goes through Deezer as before.
+  }
+
+  return out;
+}
+
+async function writePopularityCache(entries: [spotifyId: string, score: number][]): Promise<void> {
+  if (entries.length === 0) return;
+
+  try {
+    const pipeline = redis().pipeline();
+    for (const [spotifyId, score] of entries) {
+      pipeline.set(keys.popularity(spotifyId), score, {
+        ex: score === MISS ? POPULARITY_MISS_TTL_SECONDS : POPULARITY_TTL_SECONDS,
+      });
+    }
+    await pipeline.exec();
+  } catch {
+    // The next lobby pays for the search again. Nothing else is affected.
+  }
+}
+
+/**
+ * Fill `popularity` on the given tracks via Deezer, in place, within a time
+ * budget. The caller is expected to have run `applyCachedPopularity` first and
+ * to pass only the tracks the cache couldn't answer for — everything given
+ * here costs a real search.
  *
  * Whatever the budget doesn't cover simply stays null. That's the whole
  * failure strategy: partial data degrades the difficulty header and the
@@ -178,14 +257,18 @@ export async function fillPopularity(tracks: Track[], budgetMs: number): Promise
 
   let next = 0;
   let filled = 0;
+  const learned: [string, number][] = [];
 
   const worker = async (): Promise<void> => {
     while (next < tracks.length && !controller.signal.aborted) {
       const track = tracks[next++];
       const rank = await rankFor(track, controller.signal);
-      if (rank !== null) {
+      if (typeof rank === 'number') {
         track.popularity = scoreForRank(rank);
+        learned.push([track.spotifyId, track.popularity]);
         filled++;
+      } else if (rank === 'unmatched') {
+        learned.push([track.spotifyId, MISS]);
       }
       // Paced per worker, so the fleet averages CONCURRENCY/SPACING_MS ≈ 50
       // requests per second at the ceiling — comfortably under Deezer's.
@@ -198,6 +281,8 @@ export async function fillPopularity(tracks: Track[], budgetMs: number): Promise
   } finally {
     clearTimeout(deadline);
   }
+
+  await writePopularityCache(learned);
 
   return filled;
 }
