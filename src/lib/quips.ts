@@ -29,7 +29,7 @@ import type { Player, Track } from './types';
  * registered after November 2024. Era spread and track length are what's left.
  */
 
-const TARGET = 20;
+const TARGET = 10;
 
 /** House jokes. Also the safety net when the pool is too thin to mock. */
 const FILLER = [
