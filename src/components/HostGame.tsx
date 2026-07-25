@@ -1,19 +1,27 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useState } from 'react';
-import PlaylistPicker from '@/components/PlaylistPicker';
+import { useRouter } from 'next/navigation';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import JoinForm from '@/components/JoinForm';
 import Round from '@/components/Round';
 import { api } from '@/lib/client';
 import type { PublicLobby } from '@/lib/types';
 
 export default function HostGame({ code }: { code: string }) {
+  const router = useRouter();
   const [lobby, setLobby] = useState<PublicLobby | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [roundNumber, setRoundNumber] = useState<number | null>(null);
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
+  const [hostJoined, setHostJoined] = useState(false);
+  const [closing, setClosing] = useState(false);
   const [origin, setOrigin] = useState('');
+  /** The lobby keeps `currentRound` set after a round ends, so the resume below
+      must only ever fire once — otherwise leaving a round bounces straight back
+      into it on the next poll. */
+  const resumed = useRef(false);
 
   useEffect(() => setOrigin(window.location.origin), []);
 
@@ -31,7 +39,10 @@ export default function HostGame({ code }: { code: string }) {
         setLobby(next);
         setLoadError(null);
         // Resume an in-flight round after a refresh.
-        if (next.currentRound > 0) setRoundNumber(next.currentRound);
+        if (!resumed.current && next.currentRound > 0) {
+          resumed.current = true;
+          setRoundNumber(next.currentRound);
+        }
       } catch (err) {
         if (alive) setLoadError(err instanceof Error ? err.message : 'Lost the lobby.');
       }
@@ -44,15 +55,6 @@ export default function HostGame({ code }: { code: string }) {
       clearInterval(timer);
     };
   }, [code, roundNumber]);
-
-  /** Pull the lobby immediately rather than waiting out the 2s poll. */
-  const refresh = useCallback(async () => {
-    try {
-      setLobby(await api<PublicLobby>(`/api/lobby/${code}`));
-    } catch {
-      // The poll will surface it.
-    }
-  }, [code]);
 
   const start = useCallback(async () => {
     setStarting(true);
@@ -67,6 +69,22 @@ export default function HostGame({ code }: { code: string }) {
     }
   }, [code]);
 
+  /**
+   * Ending the game closes the lobby outright — the code is freed and this
+   * phone lands back on the home screen, where a new one can be created or a
+   * code typed in. The navigation happens either way: once the host has said
+   * they're done, a failed DELETE shouldn't strand them in the round.
+   */
+  const close = useCallback(async () => {
+    setClosing(true);
+    try {
+      await api(`/api/lobby/${code}`, { method: 'DELETE' });
+    } catch {
+      // The lobby expires on its own. Nothing useful to say here.
+    }
+    router.replace('/');
+  }, [code, router]);
+
   if (roundNumber !== null) {
     return (
       <Round
@@ -75,11 +93,9 @@ export default function HostGame({ code }: { code: string }) {
         n={roundNumber}
         starting={starting}
         startError={startError}
+        closing={closing}
         onNext={start}
-        onLobby={() => {
-          setStartError(null);
-          setRoundNumber(null);
-        }}
+        onClose={close}
       />
     );
   }
@@ -157,25 +173,21 @@ export default function HostGame({ code }: { code: string }) {
               <li className="player" key={player.id}>
                 <span className="player__dot" />
                 <span className="player__name">{player.name}</span>
+                <span className="player__meta">{player.trackCount} tracks</span>
               </li>
             ))}
           </ul>
         )}
       </section>
 
-      <section className="card card--flush">
-        <div className="row-between" style={{ padding: '13px 14px 11px' }}>
-          <h2 className="h2">Playlists</h2>
-          <span className="tiny">
-            {lobby.sources.length === 0
-              ? 'none yet'
-              : `${lobby.sources.length} in · ${lobby.trackCount} tracks`}
-          </span>
-        </div>
-        <div style={{ padding: '0 14px 14px' }}>
-          <PlaylistPicker code={code} onAdded={() => void refresh()} />
-        </div>
-      </section>
+      {!hostJoined && (
+        <section className="card">
+          <h2 className="h2" style={{ marginBottom: 10 }}>
+            Add your own playlist
+          </h2>
+          <JoinForm code={code} submitLabel="Add mine" onJoined={() => setHostJoined(true)} />
+        </section>
+      )}
 
       {startError && <p className="notice notice--error">{startError}</p>}
 

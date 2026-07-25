@@ -28,13 +28,25 @@ type ItunesResult = {
   artistName?: string;
   collectionName?: string;
   previewUrl?: string;
+  artworkUrl100?: string;
+  releaseDate?: string;
+};
+
+export type ItunesMatch = {
+  previewUrl: string;
+  albumArt: string | null;
+  releaseYear: number | null;
 };
 
 /**
- * Resolves a 30s preview mp3 for a track. Returns null when nothing scores
- * high enough — the caller then picks a different track. SPEC §3.2.
+ * Best iTunes match for a track. Returns null when nothing scores high enough.
+ *
+ * This resolves two things at once: a 30s preview mp3 (SPEC §3.2), and the album
+ * art and release year, which the Spotify embed doesn't carry. A track that has
+ * its own preview from the embed still comes through here for the artwork — it
+ * just no longer matters if the lookup misses.
  */
-export async function findPreviewUrl(track: Track): Promise<string | null> {
+export async function findItunesMatch(track: Track): Promise<ItunesMatch | null> {
   const artist = track.artists[0]?.name ?? '';
   const term = `${artist} ${track.title}`;
   const url =
@@ -60,7 +72,7 @@ export async function findPreviewUrl(track: Track): Promise<string | null> {
   const wantArtist = normalize(artist);
   const wantAll = normalize(track.title);
 
-  let best: { score: number; previewUrl: string } | null = null;
+  let best: { score: number; result: ItunesResult } | null = null;
 
   for (const r of results) {
     if (!r.previewUrl || !r.trackName || !r.artistName) continue;
@@ -86,8 +98,18 @@ export async function findPreviewUrl(track: Track): Promise<string | null> {
     // Thresholds keep "Live at Wembley" and karaoke covers out. SPEC §3.2.
     if (titleSim < 0.7 || artistSim < 0.5 || score < 0.68) continue;
 
-    if (!best || score > best.score) best = { score, previewUrl: r.previewUrl };
+    if (!best || score > best.score) best = { score, result: r };
   }
 
-  return best?.previewUrl ?? null;
+  if (!best?.result.previewUrl) return null;
+
+  const year = Number.parseInt((best.result.releaseDate ?? '').slice(0, 4), 10);
+
+  return {
+    previewUrl: best.result.previewUrl,
+    // 100px is what the search API hands back; the reveal renders it at 2x on a
+    // small tile, and iTunes serves the larger sizes off the same path.
+    albumArt: best.result.artworkUrl100?.replace('100x100bb', '300x300bb') ?? null,
+    releaseYear: Number.isFinite(year) ? year : null,
+  };
 }

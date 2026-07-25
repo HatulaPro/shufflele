@@ -32,7 +32,6 @@ export async function GET(_req: NextRequest, ctx: Ctx): Promise<NextResponse> {
       id: track.spotifyId,
       title: track.title,
       artist,
-      albumArt: track.albumArt,
       // Matching is against title and artist both. SPEC §1.4.
       search: `${normalize(track.title)} ${normalize(artist)}`,
     });

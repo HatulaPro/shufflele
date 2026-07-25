@@ -224,12 +224,6 @@ a {
   color: var(--t-correct-text);
 }
 
-.notice--clue {
-  border-color: var(--t-playlist-line);
-  background: var(--t-playlist-bg);
-  color: var(--t-playlist-text);
-}
-
 /* --- controls ---------------------------------------------------------- */
 
 .btn {
@@ -416,64 +410,24 @@ a {
   transition: width 0.6s ease;
 }
 
-.narrative {
-  font-size: 19px;
+.quip {
+  font-size: 20px;
   font-weight: 700;
+  line-height: 1.3;
   letter-spacing: -0.01em;
+  /* Reserved so a two-line quip doesn't shove the bar down. */
+  min-height: 2.6em;
+  animation: quip-in 0.45s ease both;
 }
 
-.narrative__steps {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
-}
-
-.narrative__step {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  color: var(--muted-dim);
-  font-size: 14.5px;
-  transition: color 0.3s ease;
-}
-
-.narrative__step[data-state='done'],
-.narrative__step[data-state='active'] {
-  color: var(--text);
-}
-
-.narrative__pip {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  border: 2px solid var(--line);
-  flex: none;
-  display: grid;
-  place-items: center;
-  font-size: 10px;
-}
-
-.narrative__step[data-state='active'] .narrative__pip {
-  border-color: var(--brand);
-  animation: pulse 1.5s ease-in-out infinite;
-}
-
-.narrative__step[data-state='done'] .narrative__pip {
-  border-color: var(--t-correct-line);
-  background: var(--t-correct-bg);
-  color: var(--t-correct-text);
-}
-
-@keyframes pulse {
-  0%,
-  100% {
-    box-shadow: 0 0 0 0 rgba(255, 61, 129, 0.5);
+@keyframes quip-in {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
   }
-  50% {
-    box-shadow: 0 0 0 7px rgba(255, 61, 129, 0);
+  to {
+    opacity: 1;
+    transform: none;
   }
 }
 
@@ -562,12 +516,6 @@ a {
 
 .lrow__sub {
   font-size: 12.5px;
-  color: var(--muted-dim);
-}
-
-.lrow__lock {
-  margin-left: auto;
-  font-size: 13px;
   color: var(--muted-dim);
 }
 
@@ -778,6 +726,10 @@ a {
   animation: modal-in 0.16s ease-out;
 }
 
+.modal--confirm {
+  justify-content: center;
+}
+
 @keyframes modal-in {
   from {
     opacity: 0;
@@ -822,17 +774,11 @@ a {
   cursor: not-allowed;
 }
 
-.result__art {
-  width: 44px;
-  height: 44px;
-  flex: none;
-  border-radius: 7px;
-  object-fit: cover;
-  background: var(--ink-3);
-}
-
 .result__text {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
+  flex: 1;
 }
 
 .result__title {

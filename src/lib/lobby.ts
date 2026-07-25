@@ -25,7 +25,6 @@ export async function createLobby(): Promise<Lobby> {
       hostToken,
       createdAt: Date.now(),
       players: [],
-      sources: [],
       currentRound: 0,
       usedTrackIds: [],
       unusableTrackIds: [],
@@ -49,6 +48,18 @@ export async function loadLobby(code: string): Promise<Lobby | null> {
 
 export async function saveLobby(lobby: Lobby): Promise<void> {
   await redis().set(keys.lobby(lobby.code), lobby, { ex: LOBBY_TTL_SECONDS });
+}
+
+/**
+ * Closes a lobby for good: the lobby row, its track pool and every round it
+ * played. Everything would expire on its own (SPEC §2.2), but the host ending
+ * the game should free the code immediately.
+ */
+export async function deleteLobby(lobby: Lobby): Promise<void> {
+  const rounds = Array.from({ length: lobby.currentRound }, (_, i) =>
+    keys.round(lobby.code, i + 1),
+  );
+  await redis().del(keys.lobby(lobby.code), keys.tracks(lobby.code), ...rounds);
 }
 
 export async function loadTracks(code: string): Promise<Track[]> {

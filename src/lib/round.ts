@@ -12,14 +12,12 @@ import {
 } from './types';
 
 /**
- * Only three usable stems exist, so the ladder is padded to five rows to keep
- * the Bandle feel. A stem the silence check rejected drops its row entirely —
- * the ladder is never hardcoded to five. SPEC §1.3.
+ * One row per usable stem, plus a final row. A stem the silence check rejected
+ * drops its row entirely — the ladder length is never hardcoded. SPEC §1.3.
  */
 export function buildLadder(silent: PlayableStem[]): LadderRow[] {
   const surviving = PLAYABLE_STEMS.filter((stem) => !silent.includes(stem));
   const rows: LadderRow[] = surviving.map((stem) => ({ kind: 'stem', stem }));
-  rows.push({ kind: 'clue' });
   rows.push({ kind: 'final' });
   return rows;
 }
@@ -31,24 +29,14 @@ export function stemsUpTo(ladder: LadderRow[], row: number): PlayableStem[] {
     .map((r) => r.stem);
 }
 
-export function clueRowIndex(ladder: LadderRow[]): number {
-  return ladder.findIndex((r) => r.kind === 'clue') + 1;
-}
-
-/** The clue reveals which playlist the track came from. SPEC §1.3. */
-export function clueText(round: Round): string {
-  return `This one is from the “${round.secret.contributor}” playlist.`;
-}
-
 export type TierResult = { tier: GuessTier; contributor: string | null };
 
 /**
  * Feedback tier for a guessed track. Artist match outranks playlist match —
  * if a guess is both, the artist colour wins. SPEC §1.5.
  *
- * The pool is deduplicated on ingest, so there is normally one entry per id —
- * but entries are still matched as a set, since a lobby built before that
- * change can hold repeats.
+ * `pool` may hold the same track more than once (two players, one song), so
+ * every entry for the guessed id is considered.
  */
 export function tierFor(guessedId: string, secret: Track, pool: Track[]): TierResult | null {
   const entries = pool.filter((t) => t.spotifyId === guessedId);
@@ -65,6 +53,7 @@ export function tierFor(guessedId: string, secret: Track, pool: Track[]): TierRe
   }
 
   if (entries.some((e) => e.playlistId === secret.playlistId)) {
+    // Name the player, not the playlist's title. SPEC §1.5.
     return { tier: 'playlist', contributor: secret.contributor };
   }
 
@@ -76,7 +65,6 @@ export function artistsLabel(track: Track): string {
 }
 
 function rowLabel(row: LadderRow, index: number): { label: string; sub: string } {
-  if (row.kind === 'clue') return { label: 'Clue', sub: 'a hint, no new sound' };
   if (row.kind === 'final') return { label: 'Final guess', sub: 'last chance, nothing new' };
   return {
     label: index === 0 ? STEM_LABEL[row.stem] : `+ ${STEM_LABEL[row.stem]}`,
@@ -140,22 +128,24 @@ export function toPublicRound(round: Round): PublicRound {
     });
   }
 
-  const clueRow = ladder ? clueRowIndex(ladder) : 0;
-  const clueUnlocked = Boolean(ladder) && (over || round.currentRow >= clueRow);
+  // A silence-shortened ladder can be worth fewer rows than par asks for. The
+  // `typeof` guard is for rounds already in Redis from before par existed:
+  // those carry no such field, and Math.min(undefined, …) renders as "par NaN".
+  const par =
+    typeof round.par !== 'number' ? null : ladder ? Math.min(round.par, ladder.length) : round.par;
 
   return {
     n: round.n,
     state: round.state,
     error: round.error,
     releaseYear: round.secret.releaseYear,
-    difficulty: round.difficulty,
-    par: ladder ? Math.min(round.par, ladder.length) : round.par,
+    par,
+    difficulty: round.difficulty ?? null,
     currentRow: round.currentRow,
     totalRows: ladder ? ladder.length : 0,
     rows,
     stems,
     activeStems,
-    clue: clueUnlocked ? clueText(round) : null,
     guessedTrackIds: round.guesses.map((g) => g.trackId).filter((id): id is string => Boolean(id)),
     reveal: over
       ? {

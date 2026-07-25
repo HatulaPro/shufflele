@@ -16,15 +16,11 @@ export default function GuestJoin({ code }: { code: string }) {
         <div className="thanks">
           <div className="thanks__mark">✓</div>
           <div>
-            <h1 className="h1">You&rsquo;re in</h1>
+            <h1 className="h1">Thanks</h1>
             <p className="tagline">
-              Playing as <strong>{done.name}</strong>.
+              {done.trackCount} {done.trackCount === 1 ? 'track' : 'tracks'} added to the pool.
             </p>
           </div>
-          <p className="muted">
-            That&rsquo;s everything from your phone. Put it away and watch the host&rsquo;s screen
-            — guessing happens out loud.
-          </p>
         </div>
       </main>
     );
@@ -36,7 +32,7 @@ export default function GuestJoin({ code }: { code: string }) {
         <h1 className="wordmark wordmark--sm">shufflele</h1>
         <p className="tagline">
           Lobby <strong>{code}</strong>{' '}
-          — give us a name and you&rsquo;re done.
+          — add one playlist and you&rsquo;re done.
         </p>
       </div>
 

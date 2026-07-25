@@ -15,31 +15,61 @@ export type Track = {
   spotifyId: string;
   title: string;
   artists: Artist[];
+  /** Null at ingest — filled from the iTunes match when picked. See lib/itunes.ts. */
   albumArt: string | null;
-  playlistId: string;
   /**
-   * Name of the playlist this came from. Was the contributing player's name,
-   * until Spotify restricted playlist reads to the owning account — the pool is
-   * now built entirely from the host's playlists, so the playlist is the only
-   * thing left to attribute a track to. See README § Spotify authorization.
+   * From the album's release date at ingest, and overwritten by the iTunes match
+   * when the track is picked (iTunes knows single releases better). Null when the
+   * app has no Spotify credentials — then only the picked track ever has a year.
    */
-  contributor: string;
   releaseYear: number | null;
+  /**
+   * Popularity 0–100. Sourced from Deezer's `rank` and mapped onto Spotify's
+   * old scale (lib/deezer.ts) — Spotify itself stopped returning the field.
+   * Only ever filled for pooled tracks, and null when Deezer had no match.
+   * Drives par.
+   */
+  popularity: number | null;
+  /**
+   * Whether this track can be drawn as a secret. The pool is sampled once, at
+   * the first round, across all playlists — see `samplePool`. Everything else
+   * stays in Redis unpooled: it still shows up in the guess-modal search, so
+   * the search box never doubles as the answer set.
+   */
+  pooled: boolean;
+  /**
+   * The rest of what `GET /v1/tracks` hands back for free alongside popularity —
+   * no extra request, and it all feeds the loading-screen lines (lib/quips.ts).
+   * `audio_features` would be the interesting one (energy, tempo, danceability)
+   * but Spotify closed that endpoint to new apps in November 2024, so there is no
+   * way to know how loud or fast anybody's taste is.
+   *
+   * Null on every track pooled before these fields existed, so read them with a
+   * `typeof` guard — a live lobby's pool sits in Redis under its own TTL.
+   */
+  explicit: boolean | null;
+  durationMs: number | null;
+  albumName: string | null;
+  /** `album` | `single` | `compilation`. */
+  albumType: string | null;
+  /**
+   * Spotify's own preview, when the embed carried one. A fallback only — its
+   * length is inconsistent (often well under 30s), so iTunes wins. See the
+   * pick loop in the start route.
+   */
+  previewUrl: string | null;
+  playlistId: string;
+  /** Name of the player whose playlist this came from. */
+  contributor: string;
 };
 
-/** A guest. Guests contribute a name and guesses; the pool comes from the host. */
 export type Player = {
   id: string;
   name: string;
-  joinedAt: number;
-};
-
-/** One of the host's playlists, ingested into the pool. */
-export type PlaylistSource = {
   playlistId: string;
   playlistName: string;
   trackCount: number;
-  addedAt: number;
+  joinedAt: number;
 };
 
 export type Lobby = {
@@ -47,7 +77,6 @@ export type Lobby = {
   hostToken: string;
   createdAt: number;
   players: Player[];
-  sources: PlaylistSource[];
   /** 0 while nobody has started a round yet. */
   currentRound: number;
   /** Secret tracks already used, so a lobby never repeats a song. */
@@ -76,15 +105,12 @@ export type GuessLog = {
   title: string | null;
   artist: string | null;
   tier: GuessTier | null;
-  /** Only set for the `playlist` tier: the playlist the track came from. */
+  /** Only set for the `playlist` tier: who contributed that playlist. */
   contributor: string | null;
   trackId: string | null;
 };
 
-export type LadderRow =
-  | { kind: 'stem'; stem: PlayableStem }
-  | { kind: 'clue' }
-  | { kind: 'final' };
+export type LadderRow = { kind: 'stem'; stem: PlayableStem } | { kind: 'final' };
 
 export type Round = {
   code: string;
@@ -93,6 +119,9 @@ export type Round = {
   error: string | null;
   /** Never serialised to the client. */
   secret: Track;
+  /** Both null when the secret track has no popularity. See lib/par.ts. */
+  par: number | null;
+  difficulty: string | null;
   previewUrl: string;
   predictionId: string | null;
   /** Unguessable component of the webhook callback URL. */
@@ -105,8 +134,6 @@ export type Round = {
   /** 1-based index of the row awaiting a guess. */
   currentRow: number;
   guesses: GuessLog[];
-  par: number;
-  difficulty: string;
   createdAt: number;
   /** Last time we polled Replicate directly (webhook fallback). */
   polledAt: number;
@@ -116,7 +143,7 @@ export type Round = {
 
 export type PublicRow = {
   index: number;
-  kind: 'stem' | 'clue' | 'final';
+  kind: 'stem' | 'final';
   label: string;
   /** What you hear once this row is unlocked. */
   sub: string;
@@ -129,8 +156,9 @@ export type PublicRound = {
   state: RoundState;
   error: string | null;
   releaseYear: number | null;
-  difficulty: string;
-  par: number;
+  /** Clamped to the round's actual ladder length. Null hides the header. */
+  par: number | null;
+  difficulty: string | null;
   currentRow: number;
   totalRows: number;
   rows: PublicRow[];
@@ -138,7 +166,6 @@ export type PublicRound = {
   stems: { stem: PlayableStem; url: string }[];
   /** Of those, the ones that should currently be audible. */
   activeStems: PlayableStem[];
-  clue: string | null;
   guessedTrackIds: string[];
   reveal: {
     spotifyId: string;
@@ -153,29 +180,16 @@ export type PublicRound = {
 export type PublicLobby = {
   code: string;
   isHost: boolean;
-  players: { id: string; name: string }[];
-  /** Only sent to the host — guests never see the playlist list. */
-  sources: { playlistId: string; playlistName: string; trackCount: number }[];
+  players: { id: string; name: string; trackCount: number }[];
   trackCount: number;
   currentRound: number;
   canStart: boolean;
-};
-
-/** One row in the host's playlist picker. */
-export type OwnedPlaylist = {
-  id: string;
-  name: string;
-  trackCount: number;
-  image: string | null;
-  /** Already ingested into this lobby. */
-  added: boolean;
 };
 
 export type Candidate = {
   id: string;
   title: string;
   artist: string;
-  albumArt: string | null;
   /** Pre-normalised `title artist`, so the client can substring-match directly. */
   search: string;
 };

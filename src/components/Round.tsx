@@ -13,14 +13,25 @@ type Props = {
   n: number;
   starting: boolean;
   startError: string | null;
+  closing: boolean;
   onNext: () => void;
-  onLobby: () => void;
+  onClose: () => void;
 };
 
-/** A progress narrative, not a spinner. SPEC §1.2. */
-const STEPS = ['Finding the track', 'Separating the drums', 'Almost there'];
+/** How long each loading line stays on screen. SPEC §1.2. */
+const QUIP_SECONDS = 6;
+/** Shown until the real lines arrive, and if the fetch fails outright. */
+const FALLBACK_QUIP = 'Digging through everyone’s questionable taste…';
 
-export default function Round({ code, n, starting, startError, onNext, onLobby }: Props) {
+export default function Round({
+  code,
+  n,
+  starting,
+  startError,
+  closing,
+  onNext,
+  onClose,
+}: Props) {
   const [round, setRound] = useState<PublicRound | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -28,9 +39,16 @@ export default function Round({ code, n, starting, startError, onNext, onLobby }
   const [candidates, setCandidates] = useState<Candidate[] | null>(null);
   const [candidatesLoading, setCandidatesLoading] = useState(false);
   const [elapsed, setElapsed] = useState(0);
+  const [quips, setQuips] = useState<string[]>([]);
+  const [leaving, setLeaving] = useState(false);
   const ladderPosted = useRef(false);
 
   const player = useStemPlayer(round?.stems ?? [], round?.activeStems ?? []);
+
+  const over = round?.state === 'won' || round?.state === 'lost';
+  useEffect(() => {
+    if (over && player.playing) player.toggle();
+  }, [over, player.playing, player.toggle]);
 
   // Host polls every 2s while the separation is in flight, then stops.
   useEffect(() => {
@@ -65,6 +83,23 @@ export default function Round({ code, n, starting, startError, onNext, onLobby }
     const timer = setInterval(() => setElapsed((value) => value + 1), 1000);
     return () => clearInterval(timer);
   }, [waiting]);
+
+  // Loading-screen lines. One fetch per round, and a failure is silent — this is
+  // decoration, and the fallback line covers it.
+  useEffect(() => {
+    // `waiting` starts true, so this fires on mount; the guard only bites on a
+    // round resumed mid-play, which never shows the loading screen.
+    if (!waiting || quips.length > 0) return;
+    let alive = true;
+    api<{ quips: string[] }>(`/api/lobby/${code}/quips`)
+      .then((body) => {
+        if (alive) setQuips(body.quips);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [code, n, waiting, quips.length]);
 
   // Silence check. The browser has the decoded buffers, so it measures RMS and
   // reports the dead stems; the server drops their rows before the guess screen
@@ -126,11 +161,36 @@ export default function Round({ code, n, starting, startError, onNext, onLobby }
     [code, n],
   );
 
+  /**
+   * Leaving a song is nearly always "give me a different one", so the exit asks
+   * that first. The other way out ends the game: the lobby is closed and the
+   * phone goes back to the home screen.
+   */
+  const leavePrompt = leaving && (
+    <div className="modal modal--confirm" role="dialog" aria-modal="true" aria-label="Leave song">
+      <div className="card stack">
+        <h2 className="h1">That's it?</h2>
+        <p className="muted">GGs I guess</p>
+        <button className="btn btn--ghost btn--block" onClick={onClose} disabled={closing}>
+          {closing ? 'Ending…' : 'Yeah, end the game'}
+        </button>
+        <button className="btn btn--quiet btn--block" onClick={() => setLeaving(false)}>
+          Keep playing
+        </button>
+      </div>
+    </div>
+  );
+
+  const askToLeave = () => setLeaving(true);
+
   // --- loading -----------------------------------------------------------
 
   if (waiting) {
-    const step = round?.state === 'ready' ? 2 : elapsed < 7 ? 0 : elapsed < 28 ? 1 : 2;
     const progress = Math.round(Math.min(0.94, 1 - Math.exp(-elapsed / 20)) * 100);
+    // Derived from the elapsed counter rather than a second timer, so the line
+    // and the bar can never drift apart.
+    const slot = Math.floor(elapsed / QUIP_SECONDS);
+    const quip = quips.length > 0 ? quips[slot % quips.length]! : FALLBACK_QUIP;
 
     return (
       <main className="shell">
@@ -140,34 +200,29 @@ export default function Round({ code, n, starting, startError, onNext, onLobby }
         </div>
 
         <div className="card stack">
-          <p className="narrative">{STEPS[step]}…</p>
+          {/* Keyed so every new line replays the fade instead of swapping flat. */}
+          <p className="quip" key={quip}>
+            {quip}
+          </p>
           <div className="progress">
             <div className="progress__bar" style={{ width: `${progress}%` }} />
           </div>
-          <ul className="narrative__steps">
-            {STEPS.map((label, index) => (
-              <li
-                className="narrative__step"
-                key={label}
-                data-state={index < step ? 'done' : index === step ? 'active' : 'waiting'}
-              >
-                <span className="narrative__pip">{index < step ? '✓' : ''}</span>
-                {label}
-              </li>
-            ))}
-          </ul>
+          <p className="tiny" style={{ textAlign: 'center' }}>
+            This usually takes a minute.
+          </p>
         </div>
-
-        <p className="tiny">
-          Splitting a track into stems takes 20–40 seconds, or up to two minutes if the GPU was
-          asleep. Nobody needs to look at their phone.
-        </p>
 
         {error && <p className="notice notice--error">{error}</p>}
 
-        <button className="btn btn--quiet btn--block" onClick={onLobby} style={{ marginTop: 'auto' }}>
-          Back to lobby
+        <button
+          className="btn btn--quiet btn--block"
+          onClick={askToLeave}
+          style={{ marginTop: 'auto' }}
+        >
+          End game
         </button>
+
+        {leavePrompt}
       </main>
     );
   }
@@ -184,10 +239,12 @@ export default function Round({ code, n, starting, startError, onNext, onLobby }
           <button className="btn btn--primary btn--block" onClick={onNext} disabled={starting}>
             {starting ? 'Picking…' : 'Try another song'}
           </button>
-          <button className="btn btn--quiet btn--block" onClick={onLobby}>
-            Back to lobby
+          <button className="btn btn--quiet btn--block" onClick={askToLeave}>
+            End game
           </button>
         </div>
+
+        {leavePrompt}
       </main>
     );
   }
@@ -202,11 +259,12 @@ export default function Round({ code, n, starting, startError, onNext, onLobby }
       <main className="shell">
         <div className={`verdict ${won ? 'verdict--win' : 'verdict--lose'}`}>
           <p className="verdict__word">{won ? 'Got it' : 'Nope'}</p>
-          <p className="muted">
-            {won
-              ? `${burned} ${burned === 1 ? 'row' : 'rows'} used — par ${round.par}`
-              : 'Every row burned.'}
-          </p>
+          {won && (
+            <p className="muted">
+              {burned} {burned === 1 ? 'row' : 'rows'} used
+              {round.par ? ` — par ${round.par}` : ''}
+            </p>
+          )}
         </div>
 
         <div className="card stack">
@@ -219,7 +277,7 @@ export default function Round({ code, n, starting, startError, onNext, onLobby }
               <div className="reveal__title">{round.reveal.title}</div>
               <div className="reveal__artist">{round.reveal.artist}</div>
               <p className="tiny" style={{ marginTop: 6 }}>
-                From &ldquo;{round.reveal.contributor}&rdquo;
+                From {round.reveal.contributor}&rsquo;s playlist
                 {round.reveal.releaseYear ? ` · ${round.reveal.releaseYear}` : ''}
               </p>
             </div>
@@ -242,10 +300,12 @@ export default function Round({ code, n, starting, startError, onNext, onLobby }
           <button className="btn btn--primary btn--block" onClick={onNext} disabled={starting}>
             {starting ? 'Picking…' : 'Next song'}
           </button>
-          <button className="btn btn--quiet btn--block" onClick={onLobby}>
-            Back to lobby
+          <button className="btn btn--quiet btn--block" onClick={askToLeave}>
+            End game
           </button>
         </div>
+
+        {leavePrompt}
       </main>
     );
   }
@@ -255,8 +315,8 @@ export default function Round({ code, n, starting, startError, onNext, onLobby }
   return (
     <main className="shell">
       <div className="row-between">
-        <button className="btn btn--quiet" onClick={onLobby}>
-          ‹ Lobby
+        <button className="btn btn--quiet" onClick={askToLeave}>
+          End game
         </button>
         <span className="tiny">
           Row {round.currentRow} of {round.totalRows}
@@ -264,16 +324,18 @@ export default function Round({ code, n, starting, startError, onNext, onLobby }
       </div>
 
       {/* Header metadata is deliberately non-identifying. SPEC §1.2. */}
-      <div className="meta-bar">
-        {round.releaseYear && <span className="chip">Released {round.releaseYear}</span>}
-        <span className="chip chip--accent">
-          {round.difficulty} · par {round.par}
-        </span>
-      </div>
+      {(round.releaseYear || round.par) && (
+        <div className="meta-bar">
+          {round.releaseYear && <span className="chip">Released {round.releaseYear}</span>}
+          {round.par && (
+            <span className="chip chip--accent">
+              {round.difficulty} · par {round.par}
+            </span>
+          )}
+        </div>
+      )}
 
       <Ladder rows={round.rows} />
-
-      {round.clue && <p className="notice notice--clue">{round.clue}</p>}
 
       <PlayerBar player={player} />
 
@@ -298,6 +360,8 @@ export default function Round({ code, n, starting, startError, onNext, onLobby }
           onClose={() => setModalOpen(false)}
         />
       )}
+
+      {leavePrompt}
     </main>
   );
 }

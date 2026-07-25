@@ -15,7 +15,6 @@ export default function Ladder({ rows }: { rows: PublicRow[] }) {
           <div className="lrow__body">
             <div className="lrow__label">
               <span>{row.label}</span>
-              {row.state === 'locked' && !row.guess && <span className="lrow__lock">locked</span>}
             </div>
             <div className="lrow__sub">{row.sub}</div>
             {row.guess && <GuessChip guess={row.guess} />}
@@ -37,7 +36,7 @@ function GuessChip({ guess }: { guess: GuessLog }) {
       {/* Only the playlist tier gets extra text, and it names the player who
           contributed the playlist, not the playlist itself. SPEC §1.5. */}
       {guess.tier === 'playlist' && guess.contributor && (
-        <span className="guess-chip__extra">From &ldquo;{guess.contributor}&rdquo;</span>
+        <span className="guess-chip__extra">From {guess.contributor}&rsquo;s playlist</span>
       )}
     </div>
   );

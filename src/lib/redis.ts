@@ -28,9 +28,6 @@ export const keys = {
   lobby: (code: string) => `lobby:${code}`,
   tracks: (code: string) => `lobby:${code}:tracks`,
   round: (code: string, n: number) => `lobby:${code}:round:${n}`,
-  // Versioned: a cached Client Credentials token from an older deploy is not
-  // interchangeable with the user token, and reusing one yields a bare 401.
-  spotifyToken: () => 'spotify:user-token',
   ratelimit: (day: string) => `ratelimit:games:${day}`,
 };
 

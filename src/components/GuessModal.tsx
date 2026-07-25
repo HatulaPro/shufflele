@@ -77,14 +77,6 @@ export default function GuessModal({ candidates, loading, guessed, busy, onPick,
               disabled={done || busy}
               onClick={() => onPick(candidate.id)}
             >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                className="result__art"
-                src={candidate.albumArt ?? ''}
-                alt=""
-                loading="lazy"
-                decoding="async"
-              />
               <span className="result__text">
                 <span className="result__title">{candidate.title}</span>
                 <span className="result__artist">{candidate.artist}</span>
