@@ -14,8 +14,8 @@ type Props = {
 };
 
 export default function JoinForm({ code, onJoined, submitLabel = 'Send it in', defaultName = '' }: Props) {
-  const [name, setName] = useState(defaultName);
-  const [playlistUrl, setPlaylistUrl] = useState('');
+  const [name, setName] = useState(() => defaultName || (typeof window !== 'undefined' ? localStorage.getItem('shufflele:name') ?? '' : ''));
+  const [playlistUrl, setPlaylistUrl] = useState(() => typeof window !== 'undefined' ? localStorage.getItem('shufflele:playlistUrl') ?? '' : '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -30,6 +30,8 @@ export default function JoinForm({ code, onJoined, submitLabel = 'Send it in', d
         method: 'POST',
         body: JSON.stringify({ name: name.trim(), playlistUrl }),
       });
+      localStorage.setItem('shufflele:name', name.trim());
+      localStorage.setItem('shufflele:playlistUrl', playlistUrl);
       onJoined(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not add that playlist.');
