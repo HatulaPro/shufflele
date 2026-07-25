@@ -37,7 +37,7 @@ function GuessChip({ guess }: { guess: GuessLog }) {
       {/* Only the playlist tier gets extra text, and it names the player who
           contributed the playlist, not the playlist itself. SPEC §1.5. */}
       {guess.tier === 'playlist' && guess.contributor && (
-        <span className="guess-chip__extra">From {guess.contributor}&rsquo;s playlist</span>
+        <span className="guess-chip__extra">From &ldquo;{guess.contributor}&rdquo;</span>
       )}
     </div>
   );

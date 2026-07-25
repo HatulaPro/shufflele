@@ -25,6 +25,7 @@ export async function createLobby(): Promise<Lobby> {
       hostToken,
       createdAt: Date.now(),
       players: [],
+      sources: [],
       currentRound: 0,
       usedTrackIds: [],
       unusableTrackIds: [],

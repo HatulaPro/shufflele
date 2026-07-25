@@ -3,19 +3,17 @@
 import { type FormEvent, useState } from 'react';
 import { api } from '@/lib/client';
 
-export type JoinResult = { playlistName: string; trackCount: number };
+export type JoinResult = { name: string };
 
 type Props = {
   code: string;
   onJoined: (result: JoinResult) => void;
-  /** Label for the submit button — the host's inline copy differs. */
   submitLabel?: string;
-  defaultName?: string;
 };
 
-export default function JoinForm({ code, onJoined, submitLabel = 'Send it in', defaultName = '' }: Props) {
-  const [name, setName] = useState(defaultName);
-  const [playlistUrl, setPlaylistUrl] = useState('');
+/** Guests bring a name and nothing else — the host builds the track pool. */
+export default function JoinForm({ code, onJoined, submitLabel = "I'm in" }: Props) {
+  const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -28,16 +26,14 @@ export default function JoinForm({ code, onJoined, submitLabel = 'Send it in', d
     try {
       const result = await api<JoinResult>(`/api/lobby/${code}/join`, {
         method: 'POST',
-        body: JSON.stringify({ name: name.trim(), playlistUrl }),
+        body: JSON.stringify({ name: name.trim() }),
       });
       onJoined(result);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not add that playlist.');
+      setError(err instanceof Error ? err.message : 'Could not join.');
       setBusy(false);
     }
   };
-
-  const ready = name.trim().length > 0 && playlistUrl.trim().length > 0;
 
   return (
     <form className="stack" onSubmit={submit}>
@@ -52,38 +48,16 @@ export default function JoinForm({ code, onJoined, submitLabel = 'Send it in', d
           onChange={(e) => setName(e.target.value.slice(0, 24))}
           placeholder="Sam"
           autoComplete="nickname"
-          enterKeyHint="next"
-        />
-      </div>
-
-      <div className="field">
-        <label className="label" htmlFor="playlist-url">
-          Public Spotify playlist link
-        </label>
-        <input
-          id="playlist-url"
-          className="input"
-          value={playlistUrl}
-          onChange={(e) => setPlaylistUrl(e.target.value)}
-          placeholder="https://open.spotify.com/playlist/…"
-          inputMode="url"
-          autoCapitalize="off"
-          autoCorrect="off"
-          spellCheck={false}
           enterKeyHint="go"
         />
-        <p className="tiny">
-          It has to be public. In Spotify: playlist → <strong>⋯</strong> → Edit details →
-          Public.
-        </p>
       </div>
 
       {error && <p className="notice notice--error">{error}</p>}
 
-      <button className="btn btn--primary btn--block" type="submit" disabled={!ready || busy}>
+      <button className="btn btn--primary btn--block" type="submit" disabled={!name.trim() || busy}>
         {busy ? (
           <>
-            <span className="spinner" /> Reading your playlist…
+            <span className="spinner" /> Joining…
           </>
         ) : (
           submitLabel

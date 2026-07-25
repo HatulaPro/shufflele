@@ -35,9 +35,9 @@ export function clueRowIndex(ladder: LadderRow[]): number {
   return ladder.findIndex((r) => r.kind === 'clue') + 1;
 }
 
-/** The clue reveals whose playlist the track came from. SPEC §1.3. */
+/** The clue reveals which playlist the track came from. SPEC §1.3. */
 export function clueText(round: Round): string {
-  return `This one is from ${round.secret.contributor}'s playlist.`;
+  return `This one is from the “${round.secret.contributor}” playlist.`;
 }
 
 export type TierResult = { tier: GuessTier; contributor: string | null };
@@ -46,8 +46,9 @@ export type TierResult = { tier: GuessTier; contributor: string | null };
  * Feedback tier for a guessed track. Artist match outranks playlist match —
  * if a guess is both, the artist colour wins. SPEC §1.5.
  *
- * `pool` may hold the same track more than once (two players, one song), so
- * every entry for the guessed id is considered.
+ * The pool is deduplicated on ingest, so there is normally one entry per id —
+ * but entries are still matched as a set, since a lobby built before that
+ * change can hold repeats.
  */
 export function tierFor(guessedId: string, secret: Track, pool: Track[]): TierResult | null {
   const entries = pool.filter((t) => t.spotifyId === guessedId);
@@ -64,7 +65,6 @@ export function tierFor(guessedId: string, secret: Track, pool: Track[]): TierRe
   }
 
   if (entries.some((e) => e.playlistId === secret.playlistId)) {
-    // Name the player, not the playlist's title. SPEC §1.5.
     return { tier: 'playlist', contributor: secret.contributor };
   }
 

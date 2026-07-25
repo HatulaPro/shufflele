@@ -1,8 +1,11 @@
 # Shufflele — Spec
 
-A party game for guessing songs pulled from the players' own Spotify playlists. One phone (the
-host's) runs the game; everyone else joins briefly from their own phone only to contribute a
-playlist, then puts it away and guesses out loud.
+A party game for guessing songs pulled from the host's Spotify playlists. One phone (the host's)
+runs the game; everyone else joins briefly from their own phone only to give a name, then puts it
+away and guesses out loud.
+
+> The original design pooled a playlist from *every* player. Spotify now serves a playlist's
+> contents only to the account that owns it, so that is no longer buildable — see §2.1.
 
 Private/personal project. Deployed to Vercel Hobby (non-commercial use only).
 
@@ -15,20 +18,20 @@ Private/personal project. Deployed to Vercel Hobby (non-commercial use only).
 **Host phone**
 1. Opens the app, taps **Create lobby**.
 2. Gets a 6-digit code displayed large on screen.
-3. Sees a live-updating list of joined players and whether each has submitted a playlist.
-4. The host also joins their own lobby (same join form, inline on the host screen) so their
-   playlist is in the pool.
+3. Sees a live-updating list of joined players.
+4. Picks playlists for the pool from a list of the ones the server's Spotify account owns — no
+   URL to paste, no link to find. Up to 8 per lobby; each is ingested on tap and its track count
+   shown. Tracks already pooled from an earlier playlist are not added twice.
 5. **Start game** is enabled once ≥1 playlist has been ingested successfully.
 
 **Guest phones**
 1. Open the app, tap **Join**, enter the 6-digit code.
-2. Enter their name.
-3. Paste a **public Spotify playlist URL**. No sign-in, ever — nobody authenticates with Spotify.
-   The UI tells them plainly: *"Your playlist must be public. Spotify → playlist → ⋯ → Edit
-   details → Public."*
-4. Server validates and ingests the playlist; the guest sees either an error ("that playlist is
-   private or the link is wrong") or a **thank-you screen**. That is the last interaction from
-   the guest's phone. Nothing else is ever rendered there.
+2. Enter their name. Names must be unique within a lobby, since the reveal screen credits them.
+3. That's it — no sign-in, ever, and nothing to paste. The guest sees a **thank-you screen**, and
+   that is the last interaction from their phone. Nothing else is ever rendered there.
+
+The guest lobby view never includes the playlist list: the names of the pooled playlists are the
+answer to the playlist guess tier (§1.5), so the lobby route only sends `sources` to the host.
 
 ### 1.2 Round
 
@@ -44,7 +47,7 @@ Private/personal project. Deployed to Vercel Hobby (non-commercial use only).
 4. The host guesses. Each guess or skip burns the current row, logs the attempt into that row,
    and unlocks the next one (adding another stem to the mix).
 5. Round ends when the host guesses correctly (**win**) or burns the last row (**lose**).
-6. **Result screen**: reveal the track, whose playlist it came from, and a Spotify embed of the
+6. **Result screen**: reveal the track, which playlist it came from, and a Spotify embed of the
    track (plays a 30s preview for logged-out listeners — acceptable). Button: **Next song**.
 
 ### 1.3 The reveal ladder
@@ -57,13 +60,20 @@ padded to five rows to keep the Bandle feel:
 | 1 | Drums | drums only |
 | 2 | + Bass | drums + bass |
 | 3 | + Other | full instrumental (everything but vocals) |
-| 4 | Clue | instrumental + a text clue (release year already shown; clue reveals the whose-playlist-is-it, or genre) |
+| 4 | Clue | instrumental + a text clue (release year already shown; clue names the playlist it came from) |
 | 5 | Final guess | last chance, no new information |
 
 Guessing on row 1 is the maximum score. Burning the last row is a loss.
 
-**Par is derived from the track's Spotify `popularity`** (0–100, returned on the track object at
-ingest — no extra call). A well-known song should be expected in fewer stems than an obscure one. Par is display-and-scoring only — it sets the "Difficulty: Medium (par 3)" header and what counts as a good result. It does **not** change how many rows the round has; the ladder length is always driven by how many stems survived the silence check.
+**Par is currently flat — every round is par 3.** It was derived from the track's Spotify
+`popularity` (0–100) at ingest, so a well-known song was expected in fewer stems than an obscure
+one. Spotify no longer returns `popularity` on any endpoint that still works (not on playlist
+items, not on `/tracks/{id}`, not on `/artists/{id}`, not on search results), so there is no
+per-track difficulty signal left to read. Replacing it is deferred — see §5.
+
+Par is display-and-scoring only — it sets the "Difficulty (par 3)" header and what counts as a
+good result. It does **not** change how many rows the round has; the ladder length is always
+driven by how many stems survived the silence check.
 
 If the silence check (§3.3) rejects a stem, that row is dropped and the ladder shortens for that
 round — the UI renders whatever rows the round actually has, it is not hardcoded to five.
@@ -90,7 +100,7 @@ label, with a colour that encodes how close it was. Ordered from coldest to warm
 | Condition | Colour | Extra text shown |
 |-----------|--------|------------------|
 | No relation to the secret track | red / muted | `Artist — Title` |
-| Guessed track is from **the same playlist** as the secret track | amber-ish, cool ("getting closer") | `Artist — Title` + **the name of the player who contributed that playlist**, not the playlist's title |
+| Guessed track is from **the same playlist** as the secret track | amber-ish, cool ("getting closer") | `Artist — Title` + **the playlist's name** |
 | Guessed track's **artist matches** the secret track's artist | warm orange/gold ("so close") | `Artist — Title` |
 | Correct track | green | `Artist — Title` |
 
@@ -108,7 +118,7 @@ Host phone ──┐
              ├─► Next.js (App Router) on Vercel Hobby
 Guest phones ┘        │
                       ├─► Upstash Redis    (all state; HTTP client, no pooling)
-                      ├─► Spotify Web API  (Client Credentials — app token, no user OAuth)
+                      ├─► Spotify Web API  (one long-lived host grant; no per-player OAuth)
                       ├─► iTunes Search API (30s preview mp3 URL)
                       └─► Replicate         (Demucs htdemucs, 4-stem)
 ```
@@ -117,12 +127,45 @@ Everything is stateless request/response. **No WebSockets, no SSE** — Vercel H
 socket server and SSE would pin a function for its whole duration. The host phone polls; guest
 phones don't need updates at all after submitting.
 
-### 2.1 Why no user auth
+### 2.1 Why the pool is the host's, and why guests still never log in
 
-A new Spotify app is stuck in *development mode*, where only up to 25 manually-registered users
-may authorize it, and Extended Quota Mode requires a review a hobby project won't pass. Reading
-a **public** playlist needs only a Client Credentials token, which is app-level and uncapped. So:
-players make their playlist public and paste the link. Zero logins in the entire product.
+Two Spotify constraints, pulling in opposite directions.
+
+**Client Credentials can no longer read playlists.** `GET /v1/playlists/{id}/items` answers
+`401 Valid user authentication required` for an app token. The older `/tracks` sub-resource that
+this spec was written against is retired and answers `403` to *everyone*, including Spotify's own
+first-party docs console. Playlist reads now require a user token, full stop.
+
+**A user token only reads playlists its own account owns.** Not "public playlists" — owned ones.
+A playlist that is public, made by an ordinary user, and even followed into the token-holder's
+own library still returns `403` on its contents. Metadata (name, owner, artwork) reads fine; the
+tracks do not. This was verified directly, and it is the constraint that kills the original
+design: there is no auth flow under which the server can read a guest's playlist.
+
+**Per-guest OAuth is not a way out.** An app in development mode admits only 25 users, each added
+by hand in the dashboard with their Spotify account email — incompatible with guests who scan a
+QR code at a party. Extended Quota Mode lifts that, but it's a review with an uncertain outcome.
+
+So: the server holds **one** long-lived user grant (`SPOTIFY_REFRESH_TOKEN`, minted once by
+`npm run spotify:auth`) and reads every playlist as that single account. The host picks from that
+account's own playlists. Guests still authenticate with nothing — the property this spec cared
+about is preserved, just for a different reason than originally written.
+
+Refresh tokens from the Authorization Code flow don't expire on a timer. They die when the app is
+revoked at spotify.com/account/apps, when the client secret is rotated, or when the requested
+scopes change. `invalid_grant` from the token endpoint is treated as exactly that and surfaced as
+"re-run `npm run spotify:auth`" rather than a generic failure. Scopes requested:
+`playlist-read-private`, `playlist-read-collaborative`.
+
+**Also lost to the same round of API restrictions**, each verified rather than assumed: track
+`popularity` (§1.3), playlist *search* (returns nothing), `/recommendations` (404), batch
+`/tracks?ids=` and `/artists?ids=` (403 at any batch size), and Spotify's own editorial and
+algorithmic playlists — Discover Weekly, Release Radar, Top 50 all 404 regardless of auth.
+
+One shape change to watch for when reading the API: the playlist body and `/me/playlists` entries
+now carry their paging object under **`items`**, not `tracks`, and each entry nests the track
+under **`item`**, not `track`. Passing a `fields` mask written against the old shape returns
+`200` with an empty object rather than an error, which makes this failure mode silent.
 
 ### 2.2 Persistence
 
@@ -131,7 +174,7 @@ only 2 cron jobs at daily granularity):
 
 | Key | Type | TTL | Contents |
 |-----|------|-----|----------|
-| `lobby:{code}` | JSON | 6h | status, host token, created-at, player list |
+| `lobby:{code}` | JSON | 6h | status, host token, created-at, player list, ingested playlists |
 | `lobby:{code}:tracks` | JSON | 6h | pooled candidate tracks (see §3.1) |
 | `lobby:{code}:round:{n}` | JSON | 6h | secret track id, stem URLs, ladder, guesses, state |
 | `ratelimit:games:{YYYY-MM-DD}` | counter | 48h | games started today |
@@ -155,27 +198,34 @@ could get expensive.
 
 ### 3.1 Playlist ingestion
 
-On playlist submit:
-1. Parse the playlist ID out of whatever the user pasted — accept `open.spotify.com/playlist/…`,
-   `spotify:playlist:…`, with or without `?si=` tracking params.
-2. Fetch a Client Credentials token (cache it in Redis until ~1 min before expiry; it's app-wide,
-   not per-user).
-3. `GET /v1/playlists/{id}/tracks`, paginating. Cap at 200 tracks per playlist to bound cost and
-   keep the client-side search list small.
-4. Drop local files, podcast episodes, and nulls.
+The host picks a playlist id from the picker; there is no URL to parse.
+
+1. Refresh the host grant into an access token (cached in Redis until ~1 min before expiry, under
+   a key versioned by token type — a cached app token from an older deploy is not interchangeable
+   with a user token and yields a bare `401`).
+2. `GET /v1/playlists/{id}/items`, paginating. Cap at 200 tracks per playlist to bound cost and
+   keep the client-side search list small. Each entry's track is under `item`, not `track`.
+3. Drop local files, podcast episodes, and nulls.
+4. Drop tracks already pooled from an earlier playlist in this lobby, so a song in two playlists
+   is attributed to whichever was added first and never appears twice in the guess list.
 5. Store per track: `spotifyId, title, artists[{id,name}], albumArt, playlistId, contributor
-   (player name), releaseYear, popularity`.
-6. A private playlist returns 404 from the API — surface that as the "make it public" error, not
-   a generic failure.
+   (playlist name), releaseYear`.
+6. A 404 means private, deleted, or Spotify-owned — surface it as guidance, not a generic
+   failure. A 401 means the server's grant died; name the fix script.
+
+The picker itself (`GET /v1/me/playlists`) filters to playlists the account **owns**. Followed
+playlists come back in that response but their contents are unreadable, so listing them would only
+produce a 403 on tap.
 
 **Preview URLs are resolved lazily**, at song-pick time, not at ingest. Only one track per round
-needs one, and resolving 200 tracks per player against iTunes would be slow and pointlessly
+needs one, and resolving 200 tracks per playlist against iTunes would be slow and pointlessly
 close to their (informal, ~20 req/min) rate limit.
 
 ### 3.2 Song selection and preview resolution
 
 Selection is deliberately naive for now — uniform random over the pool, excluding tracks already
-used this lobby. Weighting by popularity/contributor fairness is a later problem.
+used this lobby. Weighting is a later problem, and popularity-based weighting is no longer
+possible anyway (§1.3).
 
 Because a picked track may have no iTunes match, selection and resolution are one loop:
 
@@ -229,8 +279,10 @@ Web Audio API, not `<audio>` elements — multiple `<audio>` tags drift out of s
 | Route | Method | Auth | Purpose |
 |-------|--------|------|---------|
 | `/api/lobby` | POST | — | create lobby, return code, set hostToken cookie |
-| `/api/lobby/[code]` | GET | — | lobby status + players (host polls this) |
-| `/api/lobby/[code]/join` | POST | — | name + playlist URL, ingest, add player |
+| `/api/lobby/[code]` | GET | — | lobby status + players; playlists only for the host |
+| `/api/lobby/[code]/join` | POST | — | name, add player |
+| `/api/lobby/[code]/playlists` | GET | host | the host account's own playlists, for the picker |
+| `/api/lobby/[code]/playlists` | POST | host | ingest one playlist into the pool |
 | `/api/lobby/[code]/start` | POST | host | rate-limit check, pick track, kick off Demucs |
 | `/api/lobby/[code]/round/[n]` | GET | host | round state; **vocals stem stripped** |
 | `/api/lobby/[code]/round/[n]/guess` | POST | host | submit guess/skip, return feedback tier |
@@ -239,7 +291,7 @@ Web Audio API, not `<audio>` elements — multiple `<audio>` tags drift out of s
 
 **Guessing is validated server-side.** The client never receives the secret track id, and the
 guess route returns only a feedback tier (`correct` / `artist` / `playlist` / `none`) plus, for
-the playlist tier, the contributing player's name. Otherwise the answer is one devtools tab away
+the playlist tier, the playlist's name. Otherwise the answer is one devtools tab away
 — which matters, because the host is playing on a phone in front of an audience that can see it.
 
 ### 3.6 Config
@@ -247,6 +299,7 @@ the playlist tier, the contributing player's name. Otherwise the answer is one d
 ```
 SPOTIFY_CLIENT_ID
 SPOTIFY_CLIENT_SECRET
+SPOTIFY_REFRESH_TOKEN       # from `npm run spotify:auth`; see §2.1
 UPSTASH_REDIS_REST_URL
 UPSTASH_REDIS_REST_TOKEN
 REPLICATE_API_TOKEN
@@ -263,7 +316,14 @@ burned, playback controls beneath, guess/skip at the bottom. They do **not** def
 
 ## 4. Known limitations, accepted
 
-- Public playlists only; a private one just errors with instructions.
+- **The pool is one person's music.** Every track comes from the host's playlists, so the game is
+  "guess songs from the host's library" rather than "guess whose song this was". Restoring the
+  per-player pool depends on Extended Quota Mode being approved (§2.1).
+- The host's Spotify account is a single point of failure: revoke the app and every lobby breaks
+  until the auth script is re-run.
+- Playlists the host follows but doesn't own can't be used, even public ones.
+- Spotify's own playlists (Discover Weekly, Release Radar, Top 50) can't be used at all.
+- Par is flat, so the difficulty header and scoring carry no information right now.
 - 30s previews, so guesses are made on a fragment — usually the chorus-adjacent middle, since
   that's what iTunes serves.
 - Three real stems means a short ladder, padded with a clue row.
@@ -275,6 +335,11 @@ burned, playback controls beneath, guess/skip at the bottom. They do **not** def
 
 ## 5. Deliberately deferred
 
+- **A replacement difficulty signal for par.** Release year is still available; guess data across
+  rounds would measure real difficulty rather than approximating it.
+- **Per-player playlists, if Extended Quota Mode is approved.** Guests would authorize once and
+  pick from their own playlists; the `sources` model extends to per-player sources rather than
+  being rewritten, and `contributor` goes back to naming a person.
 - Song selection algorithm (weighting, difficulty tuning, per-contributor fairness).
 - Scoring across a session, leaderboards.
 - Visual identity — palette, type, motion.

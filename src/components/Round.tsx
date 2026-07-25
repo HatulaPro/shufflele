@@ -219,7 +219,7 @@ export default function Round({ code, n, starting, startError, onNext, onLobby }
               <div className="reveal__title">{round.reveal.title}</div>
               <div className="reveal__artist">{round.reveal.artist}</div>
               <p className="tiny" style={{ marginTop: 6 }}>
-                From {round.reveal.contributor}&rsquo;s playlist
+                From &ldquo;{round.reveal.contributor}&rdquo;
                 {round.reveal.releaseYear ? ` · ${round.reveal.releaseYear}` : ''}
               </p>
             </div>

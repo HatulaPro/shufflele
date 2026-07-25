@@ -17,19 +17,29 @@ export type Track = {
   artists: Artist[];
   albumArt: string | null;
   playlistId: string;
-  /** Name of the player whose playlist this came from. */
+  /**
+   * Name of the playlist this came from. Was the contributing player's name,
+   * until Spotify restricted playlist reads to the owning account — the pool is
+   * now built entirely from the host's playlists, so the playlist is the only
+   * thing left to attribute a track to. See README § Spotify authorization.
+   */
   contributor: string;
   releaseYear: number | null;
-  popularity: number;
 };
 
+/** A guest. Guests contribute a name and guesses; the pool comes from the host. */
 export type Player = {
   id: string;
   name: string;
+  joinedAt: number;
+};
+
+/** One of the host's playlists, ingested into the pool. */
+export type PlaylistSource = {
   playlistId: string;
   playlistName: string;
   trackCount: number;
-  joinedAt: number;
+  addedAt: number;
 };
 
 export type Lobby = {
@@ -37,6 +47,7 @@ export type Lobby = {
   hostToken: string;
   createdAt: number;
   players: Player[];
+  sources: PlaylistSource[];
   /** 0 while nobody has started a round yet. */
   currentRound: number;
   /** Secret tracks already used, so a lobby never repeats a song. */
@@ -65,7 +76,7 @@ export type GuessLog = {
   title: string | null;
   artist: string | null;
   tier: GuessTier | null;
-  /** Only set for the `playlist` tier: who contributed that playlist. */
+  /** Only set for the `playlist` tier: the playlist the track came from. */
   contributor: string | null;
   trackId: string | null;
 };
@@ -142,10 +153,22 @@ export type PublicRound = {
 export type PublicLobby = {
   code: string;
   isHost: boolean;
-  players: { id: string; name: string; playlistName: string; trackCount: number }[];
+  players: { id: string; name: string }[];
+  /** Only sent to the host — guests never see the playlist list. */
+  sources: { playlistId: string; playlistName: string; trackCount: number }[];
   trackCount: number;
   currentRound: number;
   canStart: boolean;
+};
+
+/** One row in the host's playlist picker. */
+export type OwnedPlaylist = {
+  id: string;
+  name: string;
+  trackCount: number;
+  image: string | null;
+  /** Already ingested into this lobby. */
+  added: boolean;
 };
 
 export type Candidate = {

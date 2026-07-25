@@ -88,7 +88,7 @@ export async function POST(_req: NextRequest, ctx: Ctx): Promise<NextResponse> {
     );
   }
 
-  const { par, difficulty } = parFor(chosen.popularity);
+  const { par, difficulty } = parFor();
 
   const round: Round = {
     code,

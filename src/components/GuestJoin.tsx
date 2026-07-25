@@ -18,9 +18,7 @@ export default function GuestJoin({ code }: { code: string }) {
           <div>
             <h1 className="h1">You&rsquo;re in</h1>
             <p className="tagline">
-              <strong>{done.playlistName}</strong>{' '}
-              — {done.trackCount}{' '}
-              {done.trackCount === 1 ? 'track' : 'tracks'} added to the pool.
+              Playing as <strong>{done.name}</strong>.
             </p>
           </div>
           <p className="muted">
@@ -38,7 +36,7 @@ export default function GuestJoin({ code }: { code: string }) {
         <h1 className="wordmark wordmark--sm">shufflele</h1>
         <p className="tagline">
           Lobby <strong>{code}</strong>{' '}
-          — add one playlist and you&rsquo;re done.
+          — give us a name and you&rsquo;re done.
         </p>
       </div>
 

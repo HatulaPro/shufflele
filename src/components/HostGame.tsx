@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
-import JoinForm from '@/components/JoinForm';
+import PlaylistPicker from '@/components/PlaylistPicker';
 import Round from '@/components/Round';
 import { api } from '@/lib/client';
 import type { PublicLobby } from '@/lib/types';
@@ -13,7 +13,6 @@ export default function HostGame({ code }: { code: string }) {
   const [roundNumber, setRoundNumber] = useState<number | null>(null);
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
-  const [hostJoined, setHostJoined] = useState(false);
   const [origin, setOrigin] = useState('');
 
   useEffect(() => setOrigin(window.location.origin), []);
@@ -45,6 +44,15 @@ export default function HostGame({ code }: { code: string }) {
       clearInterval(timer);
     };
   }, [code, roundNumber]);
+
+  /** Pull the lobby immediately rather than waiting out the 2s poll. */
+  const refresh = useCallback(async () => {
+    try {
+      setLobby(await api<PublicLobby>(`/api/lobby/${code}`));
+    } catch {
+      // The poll will surface it.
+    }
+  }, [code]);
 
   const start = useCallback(async () => {
     setStarting(true);
@@ -149,25 +157,25 @@ export default function HostGame({ code }: { code: string }) {
               <li className="player" key={player.id}>
                 <span className="player__dot" />
                 <span className="player__name">{player.name}</span>
-                <span className="player__meta">
-                  {player.playlistName}
-                  <br />
-                  {player.trackCount} tracks
-                </span>
               </li>
             ))}
           </ul>
         )}
       </section>
 
-      {!hostJoined && (
-        <section className="card">
-          <h2 className="h2" style={{ marginBottom: 10 }}>
-            Add your own playlist
-          </h2>
-          <JoinForm code={code} submitLabel="Add mine" onJoined={() => setHostJoined(true)} />
-        </section>
-      )}
+      <section className="card card--flush">
+        <div className="row-between" style={{ padding: '13px 14px 11px' }}>
+          <h2 className="h2">Playlists</h2>
+          <span className="tiny">
+            {lobby.sources.length === 0
+              ? 'none yet'
+              : `${lobby.sources.length} in · ${lobby.trackCount} tracks`}
+          </span>
+        </div>
+        <div style={{ padding: '0 14px 14px' }}>
+          <PlaylistPicker code={code} onAdded={() => void refresh()} />
+        </div>
+      </section>
 
       {startError && <p className="notice notice--error">{startError}</p>}
 
