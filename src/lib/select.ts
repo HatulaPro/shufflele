@@ -14,9 +14,9 @@ import type { Track } from './types';
  * Every constant is a dial on "how strongly does popularity decide this".
  * Sharper bias means lowering TEMPERATURE, not raising anything else.
  */
-const TEMPERATURE = 10;
+const TEMPERATURE = 8;
 const MAX_DEFICIT = 50;
-const UNIFORM_MIX = 0.1;
+const UNIFORM_MIX = 0.07;
 const REF_QUANTILE = 0.9;
 
 /**
@@ -96,7 +96,7 @@ function weightsFor(playlist: Track[]): number[] {
 
   return playlist.map((track) => {
     const p = typeof track.popularity === 'number' ? track.popularity : fallback;
-    // Clamped so nothing is more than e^5 ≈ 148x behind the head. Without the
+    // Clamped so nothing is more than e^6.25 ≈ 518x behind the head. Without the
     // cap the bottom of a wide playlist is reachable only in theory.
     const deficit = Math.min(Math.max(ref - p, 0), MAX_DEFICIT);
     return Math.exp(-deficit / TEMPERATURE);
@@ -205,7 +205,7 @@ export function pickSecret(eligible: Track[]): Track | null {
 
   const playlist = pickUniform([...byPlaylist.values()]);
 
-  // Roughly one round in ten ignores popularity entirely. This is the answer to
+  // Roughly one round in fourteen ignores popularity entirely. This is the answer to
   // "don't play the same handful of songs out of a 200-song playlist" that
   // doesn't cost any state: within a lobby the used-track exclusion already
   // drains the head, and across lobbies this keeps the head from being the
