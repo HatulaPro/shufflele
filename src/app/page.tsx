@@ -27,8 +27,7 @@ export default function Home() {
         <div>
           <h1 className="wordmark">shufflele</h1>
           <p className="tagline">
-            Guess songs pulled from everyone&rsquo;s own playlists. One phone runs the game —
-            everyone else just throws a playlist in and puts their phone away.
+            Guess songs pulled from your friends&rsquo; playlists. 
           </p>
         </div>
 
@@ -42,11 +41,6 @@ export default function Home() {
             Join with a code
           </button>
         </div>
-
-        <p className="tiny">
-          Nobody signs in. Guests paste a <strong>public</strong> Spotify playlist link and that
-          is the whole ask.
-        </p>
       </div>
     </main>
   );
