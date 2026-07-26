@@ -3,8 +3,7 @@ import type { Player, Track } from './types';
 /**
  * Loading-screen filler. The wait is 20–120s of nothing, so instead of narrating
  * the pipeline at people (nobody cares which stem is being separated) the screen
- * rotates through short jokes about the playlists that were actually pooled.
- * SPEC §1.2.
+ * rotates through short jokes about the playlists in the room. SPEC §1.2.
  *
  * Three rules hold everything here together:
  *

@@ -20,9 +20,15 @@ export function parFor(popularity: number | null): Par | null {
   // still in Redis under a live lobby TTL, and has no such field at all.
   if (typeof popularity !== 'number') return null;
 
-  if (popularity >= 75) return { par: 1, difficulty: 'Very easy' };
-  if (popularity >= 60) return { par: 2, difficulty: 'Easy' };
-  if (popularity >= 40) return { par: 3, difficulty: 'Medium' };
-  if (popularity >= 20) return { par: 4, difficulty: 'Hard' };
+  // Thresholds sit high on purpose. Spotify's scale is bottom-heavy — the bulk
+  // of any real playlist lands in the 30s and 40s — so bands drawn at 40/60/75
+  // handed par 2 and 3 to tracks most of the table has never heard. A low par
+  // is a claim that the song is *obvious*, so par 1 is reserved for chart-level
+  // popularity and par 2 for tracks that are still broadly known; everything
+  // mid-tail gets the full ladder.
+  if (popularity >= 85) return { par: 1, difficulty: 'Very easy' };
+  if (popularity >= 72) return { par: 2, difficulty: 'Easy' };
+  if (popularity >= 58) return { par: 3, difficulty: 'Medium' };
+  if (popularity >= 35) return { par: 4, difficulty: 'Hard' };
   return { par: 4, difficulty: 'Very hard' };
 }

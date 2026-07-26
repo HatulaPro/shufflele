@@ -97,11 +97,15 @@ arrives with the tracklist at ingest for every track (§2.1, §3.1):
 
 | `popularity` | Difficulty | Par |
 |---|---|---|
-| 75–100 | Very easy | 1 |
-| 60–74 | Easy | 2 |
-| 40–59 | Medium | 3 |
-| 20–39 | Hard | 4 |
-| 0–19 | Very hard | 4 |
+| 85–100 | Very easy | 1 |
+| 72–84 | Easy | 2 |
+| 58–71 | Medium | 3 |
+| 35–57 | Hard | 4 |
+| 0–34 | Very hard | 4 |
+
+The bands sit high because Spotify's scale is bottom-heavy: most tracks on a real playlist score in
+the 30s and 40s, and a low par is a claim that the song is obvious. Par 1 is chart-level only, par 2
+is for tracks still broadly known, and anything mid-tail gets the full ladder.
 
 A full ladder is four rows, so par caps there — Hard and Very hard share a par and differ only in
 label. When the payload omits `popularity` for a track, the round runs with no difficulty header
