@@ -50,7 +50,8 @@ const FILLER = [
   'No penguins in this prod',
   "It's okay to give up if it's from Ron's playlist",
   "Tip: always blame whoever's playlist it came from.",
-  'Shmip the Shmop'
+  'Shmip the Shmop',
+  'Efrat HaMeshugaat' // Thanks Shani
 ];
 
 /**
