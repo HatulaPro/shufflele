@@ -1,3 +1,4 @@
+import { headers } from 'next/headers';
 import { type BrokeredToken, fetchBrokeredToken } from './broker';
 import { PLAYLIST_TTL_SECONDS, TOKEN_SLACK_SECONDS, keys, redis } from './redis';
 import { baseUrl } from './replicate';
@@ -393,6 +394,37 @@ async function brokeredToken(): Promise<string | null> {
 }
 
 /**
+ * Where to reach our own Edge route.
+ *
+ * The incoming request's host is preferred over `baseUrl()`, and that ordering
+ * is the fix for a real failure: `baseUrl()` falls back to `VERCEL_URL`, which
+ * is the *deployment-specific* hostname, and Vercel's Standard Protection
+ * guards those even when the production domain is wide open — the self-call
+ * gets an SSO interstitial instead of our route. The host the guest's phone
+ * actually reached is by definition one that serves this app without a login.
+ *
+ * `headers()` throws outside a request scope; `baseUrl()` is the fallback and
+ * is also what an explicit NEXT_PUBLIC_BASE_URL still controls.
+ */
+async function selfOrigin(): Promise<string> {
+  try {
+    const incoming = await headers();
+    const host = incoming.get('x-forwarded-host') ?? incoming.get('host');
+    if (host) {
+      // Vercel always sets the forwarded proto; the local fallback has to be
+      // http, or `next dev` builds an https URL to a server that speaks plain
+      // HTTP and the self-call dies on the handshake.
+      const local = /^(localhost|127\.0\.0\.1|\[::1\])(:|$)/.test(host);
+      const proto = incoming.get('x-forwarded-proto') ?? (local ? 'http' : 'https');
+      return `${proto}://${host}`;
+    }
+  } catch {
+    // Not inside a request — fall through.
+  }
+  return baseUrl();
+}
+
+/**
  * Mint a fresh brokered token.
  *
  * On the Edge runtime this is the broker call itself. Everywhere else — which
@@ -413,7 +445,7 @@ async function mintBrokeredToken(): Promise<BrokeredToken | null> {
     return null;
   }
 
-  const url = `${baseUrl()}/api/internal/spotify-token`;
+  const url = `${await selfOrigin()}/api/internal/spotify-token`;
 
   const headers: Record<string, string> = { 'x-internal-secret': secret };
   // The self-call leaves the deployment and comes back through the front door,
@@ -446,15 +478,25 @@ async function mintBrokeredToken(): Promise<BrokeredToken | null> {
     return null;
   }
 
+  const text = await res.text();
+
   try {
-    const body = (await res.json()) as Partial<BrokeredToken>;
+    const body = JSON.parse(text) as Partial<BrokeredToken>;
     if (!body.value) {
       lastTokenFailure = 'the Edge route answered 200 with no token.';
       return null;
     }
     return { value: body.value, expiresIn: body.expiresIn ?? 3600 };
   } catch {
-    lastTokenFailure = 'the Edge route returned a body that was not JSON.';
+    // A 200 that isn't JSON is not our route answering. Overwhelmingly this is
+    // Vercel Deployment Protection: `baseUrl()` fell back to VERCEL_URL, which
+    // is the *deployment-specific* host, and Standard Protection guards those
+    // even when the production domain is open — it serves an SSO interstitial,
+    // sometimes with a 200 rather than a 401.
+    const sso = /_vercel_sso_nonce|vercel\.com\/sso|Authentication Required/i.test(text);
+    lastTokenFailure = sso
+      ? `${url} returned Vercel's SSO page. Set NEXT_PUBLIC_BASE_URL to the production domain (the deployment URL is protected), or enable Protection Bypass for Automation.`
+      : `${url} answered 200 with a non-JSON body: ${text.slice(0, 160)}`;
     return null;
   }
 }
