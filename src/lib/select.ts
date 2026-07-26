@@ -8,6 +8,14 @@ import type { Track } from './types';
  * track inside it, then a small uniform escape hatch so the tail stays
  * reachable. Nothing here is persisted — the only memory the picker has is the
  * exclusion set the start route already keeps on the lobby.
+ *
+ * Every ingested track is a candidate. There used to be a sampling stage here
+ * that marked a subset of the pool drawable, because popularity cost a Deezer
+ * search per track and the budget only stretched so far; the Web API hands
+ * popularity over with the tracklist, so there is nothing left to ration.
+ * Pool size needs no cap either — `pickSecret` draws the playlist before it
+ * ever looks at tracks, so a 500-song playlist is heard exactly as often as a
+ * 30-song one.
  */
 
 /**
@@ -18,28 +26,6 @@ const TEMPERATURE = 8;
 const MAX_DEFICIT = 50;
 const UNIFORM_MIX = 0.07;
 const REF_QUANTILE = 0.9;
-
-/**
- * How many *Deezer lookups* the whole lobby spends, split evenly across
- * playlists. This is a budget on work, not on pool size: a track whose
- * popularity is already in the cross-lobby cache (lib/deezer.ts) costs
- * nothing and is always pooled, so a lobby full of playlists that have been
- * played before pools everything for the same 25s ceiling.
- *
- * Pool size itself needs no cap: `pickSecret` draws the playlist uniformly
- * before it ever looks at tracks, so a fully-pooled playlist is heard no more
- * often than a thinly-sampled one.
- *
- * Fixed in total rather than per playlist because the cost this bounds is per
- * lobby, not per player. A two-player lobby would otherwise pay a fifth of
- * what a ten-player one does for the same budget.
- *
- * 150 is set by the lookup budget, not by the game: the paced Deezer fleet
- * resolves ~8 tracks a second, so a cold pool lands in ~18s against a 25s
- * ceiling. At 5 rounds a day it is more secrets than a lobby can ever spend.
- */
-const LOOKUP_TOTAL = 150;
-const LOOKUP_MAX_PER_PLAYLIST = 50;
 
 /**
  * Uniform in [0, 1). Six bytes is 2^48 buckets — far more resolution than the
@@ -84,13 +70,13 @@ function weightsFor(playlist: Track[]): number[] {
     .filter((p): p is number => typeof p === 'number')
     .sort((a, b) => a - b);
 
-  // A playlist Spotify never answered for degenerates to a uniform draw, which
-  // is the right fallback: popularity is fetched best-effort (lib/spotify.ts).
+  // A playlist Spotify scored nothing in degenerates to a uniform draw, which
+  // is the right fallback — it should still be playable, just unweighted.
   if (known.length === 0) return playlist.map(() => 1);
 
   const ref = quantile(known, REF_QUANTILE);
   // An unknown popularity is treated as typical for its playlist, not as zero
-  // — otherwise a partial Spotify outage silently makes those tracks
+  // — otherwise a track the payload happened to omit the field for becomes
   // unpickable rather than merely unlabelled.
   const fallback = quantile(known, 0.5);
 
@@ -114,72 +100,6 @@ function weightedPick(playlist: Track[], weights: number[]): Track {
   }
   // Only reachable through float drift on the last bucket.
   return playlist[playlist.length - 1];
-}
-
-/** Fisher–Yates over a copy, using the same CSPRNG as every other draw here. */
-function shuffled<T>(items: T[]): T[] {
-  const out = [...items];
-  for (let i = out.length - 1; i > 0; i--) {
-    const j = crypto.randomInt(i + 1);
-    [out[i], out[j]] = [out[j], out[i]];
-  }
-  return out;
-}
-
-/**
- * Mark the tracks the lobby will actually draw secrets from, in place.
- *
- * `resolved` holds the ids whose popularity the cross-lobby cache already
- * answered (see `applyCachedPopularity`). Those tracks cost no Deezer lookup,
- * so every one of them is pooled unconditionally; the lookup quota is spent
- * only on tracks that still need a search. With an empty set this degrades to
- * exactly the old behaviour: quota tracks per playlist, all needing lookups.
- *
- * Sampling is uniform inside each playlist; the popularity weighting in
- * `pickSecret` then applies within the sample.
- *
- * Called once, at the first round, because the per-playlist quota can't be
- * known at join time: players arrive one at a time and the divisor is how many
- * of them there turn out to be.
- *
- * Returns the pooled tracks; the ones not in `resolved` are the ones worth
- * sending to Deezer.
- */
-export function samplePool(tracks: Track[], resolved: ReadonlySet<string>): Track[] {
-  const byPlaylist = new Map<string, Track[]>();
-  for (const track of tracks) {
-    track.pooled = false;
-    const group = byPlaylist.get(track.playlistId);
-    if (group) group.push(track);
-    else byPlaylist.set(track.playlistId, [track]);
-  }
-
-  if (byPlaylist.size === 0) return [];
-
-  const lookupQuota = Math.min(
-    LOOKUP_MAX_PER_PLAYLIST,
-    Math.max(1, Math.floor(LOOKUP_TOTAL / byPlaylist.size)),
-  );
-
-  const pooled: Track[] = [];
-  for (const group of byPlaylist.values()) {
-    let lookups = 0;
-
-    for (const track of shuffled(group)) {
-      const needsLookup = !resolved.has(track.spotifyId);
-      if (needsLookup) {
-        // Over the lookup budget: skip, but keep scanning — a resolved track
-        // further down the shuffle still rides for free.
-        if (lookups >= lookupQuota) continue;
-        lookups++;
-      }
-
-      track.pooled = true;
-      pooled.push(track);
-    }
-  }
-
-  return pooled;
 }
 
 /**

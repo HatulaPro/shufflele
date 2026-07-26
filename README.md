@@ -20,14 +20,16 @@ Copy `.env.example` to `.env.local` and fill it in:
 | `REPLICATE_API_TOKEN` | [replicate.com/account/api-tokens](https://replicate.com/account/api-tokens) |
 | `REPLICATE_WEBHOOK_SECRET` | [replicate.com/account/webhook](https://replicate.com/account/webhook) — starts with `whsec_`. Optional locally, required in production. |
 | `NEXT_PUBLIC_BASE_URL` | Public origin used to build the webhook callback URL. On Vercel this falls back to `VERCEL_URL`. |
-| `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET` | [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard) — create an app, no review needed. Optional: without them the game runs, just with no difficulty header. |
+| `INTERNAL_API_SECRET` | Any long random string (`openssl rand -hex 32`), same value across one deployment. Gates the Edge route that fetches the Spotify token. Required. |
+| `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET` | [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard). Only useful if your app has **extended quota mode** — see [Reading playlists](#reading-playlists). Leave blank otherwise. |
+| `SPOTIFY_TOKEN_OVERRIDE` | Local development only. See [Reading playlists](#reading-playlists). |
 
 ```bash
 npm run dev
 ```
 
-Nobody signs into Spotify — not the host, not the guests. The Spotify app credentials are used
-server-side for a single metadata call and are optional. See
+Nobody signs into Spotify — not the host, not the guests. There is no OAuth flow anywhere in
+this app. How it reads playlists without one is the interesting part, and it has caveats: see
 [Reading playlists](#reading-playlists).
 
 Then open the app on the host phone, tap **Create lobby**, and read the six digits out loud.
@@ -36,97 +38,80 @@ is everyone's music mixed together. **Start game** lights up once one playlist i
 
 ### Reading playlists
 
-Playlists are read from `open.spotify.com/embed/playlist/{id}` — the widget Spotify serves for
-embedding a playlist in a web page. It server-renders the tracklist into a `__NEXT_DATA__` script
-tag, for any public playlist, to anyone, with no authentication.
+Playlists come from the Web API proper: `GET /v1/playlists/{id}` for the name, then
+`/v1/playlists/{id}/tracks` paged 100 at a time until the playlist runs out. One response carries
+`popularity`, album art, release date, `explicit`, `duration_ms`, album name and type, and artist
+ids — everything the game needs, from one source, with no per-track follow-up calls.
 
-This is not the Web API, and that isn't a shortcut — the Web API can't do this any more:
+Getting a token that can do that is the whole problem.
 
-- **Client Credentials tokens can't read playlist contents.** `/v1/playlists/{id}/items` answers
-  `401 Valid user authentication required`, and the older `/tracks` endpoint is retired.
-- **A user token only reads playlists its own account owns.** Not "public playlists" — owned ones.
-  A public playlist made by someone else returns 403 on its contents even if the account follows
-  it. Since the whole game is guests bringing *their* playlists, that path is closed.
-- **Per-guest OAuth isn't viable.** An app in Development Mode admits 25 users, each added by hand
-  in the dashboard — guests scanning a QR code at a party can't satisfy that.
+**The gate is extended quota mode.** An app without it — the kind anyone can register in the
+dashboard — gets `403` from `GET /v1/playlists/{id}` for any playlist it does not own, and never
+sees `popularity` in any payload on any endpoint. Client Credentials versus a user token makes no
+difference; the gate is the app, not the caller. Nor does per-guest OAuth help: an app in
+Development Mode admits 25 users added by hand, which guests scanning a QR code at a party cannot
+satisfy. Extended quota mode is a Spotify review that wants an organisation behind it.
 
-The trade-offs are real and worth knowing before relying on this:
+**So the token is borrowed.** [chosic.com/spotify-playlist-analyzer](https://www.chosic.com/spotify-playlist-analyzer/)
+has that quota, and its page calls `api.spotify.com` from the browser using a token it fetches
+from its own `POST /api/tools/t/` — unauthenticated, no login, no cookie. [`src/lib/broker.ts`](src/lib/broker.ts)
+asks the same way. Three headers are load-bearing, established by probing: a browser `User-Agent`
+**and** the analyser's own `Referer` (without both, Cloudflare serves its challenge page), plus an
+`app: playlist_analyzer` header (without it WordPress answers `empty params`).
 
-- **It's undocumented.** Spotify promises nothing about the embed payload and this use sits
-  outside the Developer Terms. If the shape changes, ingest breaks — every failure path surfaces a
-  message rather than a stack trace, but it will still be broken.
-- **100 tracks per playlist, and no way to page past it.** Verified: `?offset=`, `?limit=` and
-  `?page=` are ignored, and scrolling the live widget fires no further request. A longer playlist
-  contributes its first 100 songs.
-- **No album art or release year per track** — the payload has neither. Both are filled in from
-  the iTunes match when a track is picked, which is the only place they're shown.
+**And it has to be fetched from the Edge runtime.** This is the part that isn't obvious. Cloudflare
+fingerprints the TLS handshake, and Node's ClientHello comes from OpenSSL: from Node the endpoint
+answers `403` on **every** attempt, while the identical request from curl's Schannel backend
+answers `200` on every attempt — interleaved and confirmed. Header order, cipher and curve shaping,
+TLS 1.3-only and HTTP/2 all fail, because the ClientHello is not reachable from JavaScript. Doing
+it from the guest's browser is closed too: chosic's `access-control-allow-origin` is pinned to
+their own origin and the CORS preflight `403`s. So the fetch lives in
+[`/api/internal/spotify-token`](src/app/api/internal/spotify-token/route.ts), which runs on Edge —
+a different TLS stack — and the Node routes that read playlists call it over HTTP. The result is
+cached in Redis for the whole deployment, so that hop happens about once an hour.
 
-One thing gets *better* in exchange: Spotify's own editorial playlists (Today's Top Hits and
-friends) work, where the Web API 404s them at any auth level.
+Worth knowing before relying on any of this:
 
-The embed also carries a preview mp3 per track, which is the exact recording in the playlist
-rather than an iTunes guess at it — but **it is not reliably 30 seconds**. Sampled across 50
-tracks from two playlists: 17 ran the full ~30s, 17 were 20–28s, and 16 were under 20s (Architects'
-"Curse" is 16s against a 181s track). Previews come from iTunes for that reason; the Spotify one
-is used only when iTunes can't match the track at all, where the alternative is skipping it.
+- **It is someone else's endpoint and someone else's quota.** It can be rate-limited, put behind
+  the Turnstile widget that page already loads, or changed, on any day and with no notice. Every
+  path out of the broker returns null and surfaces a message rather than a stack trace, but it will
+  still be broken.
+- **`SPOTIFY_CLIENT_ID`/`SECRET` are the way out.** If this deployment's own app ever gets extended
+  quota mode, set them: they are tried first, and none of the above is reached.
+- **Local development needs `SPOTIFY_TOKEN_OVERRIDE`.** `next dev` emulates the Edge runtime on
+  Node, so the broker is unreachable locally by the same TLS check. Paste an hour-long token in by
+  hand; the curl command is in `.env.example`.
 
-### Where popularity comes from
+One thing that got *better* along the way: Spotify's own editorial playlists (Today's Top Hits and
+friends) read fine on this token, where an ordinary app 404s them.
 
-Not from Spotify, not any more. `GET /v1/tracks?ids=…` answers **403** to a Client Credentials
-token, as does every other `?ids=` batch route. The single-track `GET /v1/tracks/{id}` still
-answers 200 — but `popularity` is simply absent from the payload, as it is from `/v1/search`
-results and from `/v1/artists/{id}`. Getting the field back means extended quota mode, which wants
-a company and a review. The dashboard checkbox for "Web API" is not it.
+### Where previews come from
 
-**Deezer supplies it instead.** Its search endpoint needs no key at all and carries a `rank` per
-track, which [`src/lib/deezer.ts`](src/lib/deezer.ts) maps onto Spotify's old 0–100 scale so that
-[`par.ts`](src/lib/par.ts) and the selection weighting keep the units they were written against.
-The mapping is piecewise-linear rather than a formula because rank is badly compressed at the top:
-a global smash and a well-known album track sit a few percent apart near 1,000,000, while the
-entire long tail lives below 500,000.
+Not from Spotify, even though the tracklist carries a `preview_url` for roughly six tracks in
+seven. That clip is the exact recording, which is tempting, but **it is not reliably 30 seconds**.
+Sampled across 50 tracks from two playlists: 17 ran the full ~30s, 17 were 20–28s, and 16 were
+under 20s (Architects' "Curse" is 16s against a 181s track). A short clip makes for a bad round.
 
-Three things that look like shortcuts and aren't:
+So [`src/lib/itunes.ts`](src/lib/itunes.ts) matches the track on the iTunes Search API and uses its
+preview, which is consistently 30s, falling back to Spotify's own only when iTunes can't match the
+track at all — where the alternative is skipping the song entirely. Thresholds on title and artist
+similarity, plus a penalty for `live` / `karaoke` / `tribute` / `in the style of`, keep covers and
+concert recordings out.
 
-- **Search, not ISRC.** `/track/isrc:…` is exact and skips fuzzy matching entirely, but rank is
-  *per release*: Bohemian Rhapsody's 2011-remaster ISRC returns rank 26,799 where the canonical
-  upload returns 958,949. Exact matching would file half the classics as obscure.
-- **A loose query, not Deezer's field syntax.** `artist:"…" track:"…"` returns nothing for tracks
-  that plainly exist — Taylor Swift's "Cruel Summer" among them. Matching reuses the same fuzzy
-  scoring as the iTunes matcher.
-- **Quota refusals arrive as HTTP 200.** Past ~50 requests per 5s per IP, Deezer answers 200 with
-  `{"error":{"code":4}}` in the body, so `res.ok` is not enough. On Vercel Hobby the egress IP is
-  shared with other tenants (static IPs are a Pro feature), so that bucket isn't ours alone —
-  hence pacing well under the ceiling, one backoff, then giving up on the track.
-
-Alternatives that were checked and rejected: iTunes carries no popularity signal in any field, on
-any endpoint; Apple's RSS charts are a current top-100 only, which a party playlist barely
-intersects; ListenBrainz has the right data but its popularity API is currently returning 500 and
-needs MusicBrainz MBID resolution first. Last.fm's `playcount` is the one genuinely better source,
-and costs a free API key.
+That is now the *only* thing iTunes is asked for. Album art and release year used to come from it
+too, because the old embed payload had neither; they arrive with the tracklist now, so a track
+iTunes fluffs still reveals with the right cover.
 
 ### The pool
 
-Looking up 100 tracks per playlist would be both slow and a lot of someone else's rate limit, so
-the lobby samples first. On the first round — not at join time, since the divisor is how many
-players turn out to show up — [`samplePool`](src/lib/select.ts) draws **150 tracks total, split
-evenly across playlists and capped at 50 each**, and only those get a Deezer lookup. That is the
-answer set for the whole lobby: at 5 rounds a day it is more secrets than anyone can spend.
+Every ingested track is drawable as the secret, up to 500 per playlist. There used to be a sampling
+stage that marked a subset drawable, because popularity cost a Deezer search per track and the
+budget only stretched to ~150 of them a lobby; the Web API hands popularity over with the
+tracklist, so there is nothing left to ration and `samplePool` is gone.
 
-Everything *not* sampled stays in Redis and still appears in the guess-modal search. If search only
-contained poolable songs, the search box would be the answer set.
-
-The lookup runs under a 25s wall-clock budget; whatever doesn't resolve keeps `popularity: null`.
-
-### What the Web API is still good for
-
-Release year, `explicit`, `duration_ms`, `album.name` and `album.album_type` — still there, still
-free, and they're what the loading screen makes fun of people with (see
-[`src/lib/quips.ts`](src/lib/quips.ts)). Since the batch route 403s, ingest fetches these one id at
-a time with a small concurrency pool; twenty in parallel measured ~300ms, so a full tracklist costs
-about a second.
-
-This is a soft dependency on purpose. No credentials, a rate limit, a dead network — every path
-falls back to `popularity: null`, the round drops its difficulty header, and the game plays on.
+The 500 cap is a Redis concern, not an API one — the endpoint pages as far as you like, but a full
+16-player lobby at that cap is ~8k tracks in one value that is read and rewritten on every join.
+Personal playlists sit far below it.
 
 ### Picking the secret song
 
@@ -141,8 +126,8 @@ deep cuts are ~148x rarer than its singles without anyone tuning a knob per play
 unreachable, and no state is written anywhere — within a lobby the used-track list already drains
 the popular head, and the uniform mixture covers the rest.
 
-A track with no popularity counts as its playlist's median rather than a zero, so a track Deezer
-couldn't match costs you the difficulty label, not the song.
+A track whose payload omitted `popularity` counts as its playlist's median rather than a zero, so
+it costs you the difficulty label, not the song.
 
 ### Local development without a public URL
 
@@ -221,8 +206,9 @@ GPU time is spent, refunded if the round fails to launch. Default 5/day, `GAMES_
 Carried over from the spec, all accepted:
 
 - Public playlists only; a private one errors with instructions.
-- The first 100 tracks of a playlist, with no way to reach the rest.
-- Ingest rides on an undocumented endpoint Spotify can change without notice.
+- The first 500 tracks of a playlist. A Redis-size cap, not an API one — see [The pool](#the-pool).
+- The Spotify token is borrowed from a third party's site over an undocumented endpoint that sits
+  behind a bot check. It can break on any day and with no notice — see [Reading playlists](#reading-playlists).
 - Par reads global popularity, not the room — a niche track everyone present knows still shows as
   Very hard.
 - Par's thresholds are absolute while song selection is playlist-relative, so most rounds land on
@@ -230,8 +216,7 @@ Carried over from the spec, all accepted:
 - 30s previews, so guesses are made on a fragment.
 - Three real stems means a short ladder: one row per stem plus a final row.
 - iTunes matching will occasionally pick a remaster or a live version.
-- A track iTunes can't match falls back to Spotify's preview, which may be as short as ~15s, and
-  shows no album art or release year.
+- A track iTunes can't match falls back to Spotify's preview, which may be as short as ~15s.
 - The result-screen Spotify embed plays a preview, not the full track, for logged-out listeners.
 - Replicate cold starts can make the loading screen run over a minute.
 - 5 rounds/day hard cap.

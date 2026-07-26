@@ -21,12 +21,17 @@ import type { Player, Track } from './types';
  *   two together would hand out the `playlist` tier for free. A wide era *range*
  *   is fine; it says almost nothing. SPEC §1.5.
  *
- * What isn't here: anything about popularity, and anything about energy, tempo
- * or loudness. Popularity is only ever fetched for the sampled pool (see
- * `samplePool`), so a line counting hits would be describing a random 40 songs
- * while claiming to describe the playlist. `GET /v1/audio-features` would have
- * answered "how jumpy is Maya's taste" directly, but Spotify closed it to apps
- * registered after November 2024. Era spread and track length are what's left.
+ * That third rule is what shapes the popularity lines, which are new: the guess
+ * screen shows a difficulty label derived straight from the secret's popularity
+ * (lib/par.ts), so "everything Maya brought is obscure" plus a `Very hard`
+ * header is the year leak again in another costume. Pool-wide shares name
+ * nobody and are safe. The one per-player popularity line is a *spread*, for
+ * the same reason the era line is: a range from 4 to 88 constrains nothing.
+ *
+ * What still isn't here: energy, tempo and loudness. `GET /v1/audio-features`
+ * would answer "how jumpy is Maya's taste" directly and the token this app now
+ * runs on can reach it, but that is a second request per round for a joke, and
+ * the endpoint is deprecated besides.
  */
 
 const TARGET = 10;
@@ -189,6 +194,32 @@ const QUIPS: Quip[] = [
 
   ({ newest }) => (newest !== null ? `Freshest song here: ${newest}. Still damp.` : null),
 
+  // --- popularity (pool-wide only; see the header) ---
+
+  ({ obscureShare }) =>
+    obscureShare !== null && obscureShare >= 25
+      ? `${obscureShare}% of this pool nobody has heard of.`
+      : null,
+
+  ({ hitShare }) =>
+    hitShare !== null && hitShare >= 30 ? `${hitShare}% of this pool is chart filler.` : null,
+
+  ({ meanPopularity }) =>
+    meanPopularity !== null && meanPopularity >= 65
+      ? `This pool averages ${meanPopularity}/100. Radio.`
+      : null,
+
+  ({ meanPopularity }) =>
+    meanPopularity !== null && meanPopularity <= 30
+      ? `This pool averages ${meanPopularity}/100. Nobody wins.`
+      : null,
+
+  ({ ceiling }) =>
+    ceiling !== null ? `Nothing in here cracks ${ceiling}/100. Deeply niche.` : null,
+
+  ({ popSpread }) =>
+    popSpread ? `${possessive(popSpread.name)} list runs ${popSpread.range}. No middle.` : null,
+
   // --- titles ---
 
   ({ titles }) => (titles.love >= 5 ? `${titles.love} songs about love. Cringe.` : null),
@@ -207,6 +238,7 @@ type Bucket = {
   albums: Map<string, number>;
   durations: number[];
   years: number[];
+  popularity: number[];
   explicit: number;
   explicitKnown: number;
   singles: number;
@@ -243,6 +275,9 @@ function gather(players: Player[], tracks: Track[]) {
   let newest: number | null = null;
   let explicit = 0;
   let explicitKnown = 0;
+  // Over the unique set, so a song two people brought isn't counted twice into
+  // "how mainstream is this room".
+  const popularity: number[] = [];
 
   for (const track of unique.values()) {
     const primary = track.artists[0];
@@ -268,6 +303,8 @@ function gather(players: Player[], tracks: Track[]) {
       if (track.explicit) explicit++;
     }
 
+    if (typeof track.popularity === 'number') popularity.push(track.popularity);
+
     const lower = track.title.toLowerCase();
     if (lower.includes('love')) titles.love++;
     if (/remix|edit\b|rework/.test(lower)) titles.remix++;
@@ -285,6 +322,7 @@ function gather(players: Player[], tracks: Track[]) {
         albums: new Map(),
         durations: [],
         years: [],
+        popularity: [],
         explicit: 0,
         explicitKnown: 0,
         singles: 0,
@@ -299,6 +337,7 @@ function gather(players: Player[], tracks: Track[]) {
     if (track.albumName) bucket.albums.set(track.albumName, (bucket.albums.get(track.albumName) ?? 0) + 1);
     if (typeof track.durationMs === 'number') bucket.durations.push(track.durationMs);
     if (typeof track.releaseYear === 'number') bucket.years.push(track.releaseYear);
+    if (typeof track.popularity === 'number') bucket.popularity.push(track.popularity);
     if (typeof track.explicit === 'boolean') {
       bucket.explicitKnown++;
       if (track.explicit) bucket.explicit++;
@@ -333,11 +372,40 @@ function gather(players: Player[], tracks: Track[]) {
     explicitShare: explicitKnown >= 10 ? Math.round((explicit / explicitKnown) * 100) : null,
     oldest,
     newest,
+    ...popularityFacts(popularity),
     decade: topShare(decades, unique.size),
     bigYear: bigYear(years, unique.size),
     titles,
     ...playerFacts(buckets),
     ...extremeTracks(unique),
+  };
+}
+
+/**
+ * How mainstream the room is, in aggregate and named to nobody. The floor of 20
+ * scored tracks is there so a three-song lobby can't announce that 100% of it
+ * is obscure.
+ *
+ * `ceiling` is the one line that quotes a bound rather than a share, and it is
+ * safe in the direction that matters: it is an upper bound on *every* track in
+ * the pool, so it tells the room nothing about which one is the secret beyond
+ * what the difficulty header already said out loud.
+ */
+function popularityFacts(scores: number[]) {
+  if (scores.length < 20) {
+    return { obscureShare: null, hitShare: null, meanPopularity: null, ceiling: null };
+  }
+
+  const share = (n: number) => Math.round((n / scores.length) * 100);
+  const max = Math.max(...scores);
+
+  return {
+    obscureShare: share(scores.filter((p) => p < 25).length),
+    hitShare: share(scores.filter((p) => p >= 70).length),
+    meanPopularity: Math.round(mean(scores)),
+    // Rounded up to the next ten so the number reads as a bound, not as a
+    // specific track's score.
+    ceiling: max < 50 ? Math.ceil((max + 1) / 10) * 10 : null,
   };
 }
 
@@ -388,6 +456,16 @@ function playerFacts(buckets: Map<string, Bucket>) {
     return hi - lo >= 30 ? { score: hi - lo, range: `${lo}–${hi}` } : null;
   });
 
+  // A range, never a level. `${lo}–${hi}` spanning most of the scale says the
+  // playlist contains both a smash and a nobody, which rules out nothing — the
+  // same reasoning that makes `eraSpread` safe. See the header.
+  const popSpread = best(rows, ({ b }) => {
+    if (b.popularity.length < 10) return null;
+    const lo = Math.min(...b.popularity);
+    const hi = Math.max(...b.popularity);
+    return hi - lo >= 60 ? { score: hi - lo, range: `${lo}–${hi}` } : null;
+  });
+
   const explicitPlayer = best(rows, ({ b }) => {
     if (b.explicitKnown < 8) return null;
     const share = Math.round((b.explicit / b.explicitKnown) * 100);
@@ -405,6 +483,7 @@ function playerFacts(buckets: Map<string, Bucket>) {
     singles,
     impatient,
     eraSpread,
+    popSpread,
     explicitPlayer,
     cleanPlayer: cleanPlayer?.name ?? null,
   };

@@ -1,31 +1,37 @@
-import { PLAYLIST_TTL_SECONDS, keys, redis } from './redis';
+import { type BrokeredToken, fetchBrokeredToken } from './broker';
+import { PLAYLIST_TTL_SECONDS, TOKEN_SLACK_SECONDS, keys, redis } from './redis';
+import { baseUrl } from './replicate';
 import type { Artist, Track } from './types';
 
 /**
- * The embed page server-renders at most 100 tracks and offers no way to ask for
- * more — verified by parameter probing (`?offset=`, `?limit=`, `?page=` are all
- * ignored) and by scrolling the widget itself, which fires no follow-up request.
- * A playlist longer than this contributes its first 100 songs.
+ * Playlists are read from the Web API proper: `GET /v1/playlists/{id}/tracks`,
+ * paged 100 at a time until the playlist runs out. That gives us the whole
+ * tracklist — and `popularity`, album art, release date, explicit, duration and
+ * artist ids in the same response, none of which needed a second source.
+ *
+ * Getting there needed a token an ordinary app can't mint; see `accessToken`.
  */
-const MAX_TRACKS_PER_PLAYLIST = 100;
 
 /**
- * Spotify blocks datacentre IPs less often when the request looks like a browser
- * loading the widget, which is exactly what it is.
+ * Practical ceiling, not an API one — the endpoint pages as far as you like.
+ * What it protects is the lobby's track blob in Redis: a full 16-player lobby
+ * at this cap is ~8k tracks, and that is already a multi-megabyte value read
+ * and rewritten on every join. Personal playlists sit far below it; a curated
+ * 2,000-song monster contributes its first 500 songs.
  */
-const UA =
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+const MAX_TRACKS_PER_PLAYLIST = 500;
 
-const NEXT_DATA = /<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/;
+/** The endpoint's own maximum. */
+const PAGE_SIZE = 100;
 
 /**
- * Metadata is fetched one id at a time, which looks wasteful next to the
- * 50-ids-per-call batch endpoint — but `GET /v1/tracks?ids=…` answers 403 for a
- * Client Credentials app, as do every other `?ids=` route. `GET /v1/tracks/{id}`
- * still answers 200. Twenty in parallel measured ~300ms, so the whole tracklist
- * costs about a second.
+ * Only the fields we store. Worth spelling out: the unprojected payload carries
+ * `available_markets` on both the track and its album, which is ~180 country
+ * codes per entry and dwarfs everything we actually want.
  */
-const META_CONCURRENCY = 10;
+const TRACK_FIELDS =
+  'total,items(is_local,track(id,name,popularity,explicit,duration_ms,preview_url,' +
+  'artists(id,name),album(name,album_type,release_date,images)))';
 
 export class IngestError extends Error {
   constructor(
@@ -55,47 +61,19 @@ export function parsePlaylistId(input: string): string | null {
   return null;
 }
 
-/** The slice of the embed payload we rely on. Everything else is ignored. */
-type EmbedTrack = {
-  uri?: string;
-  title?: string;
-  subtitle?: string;
-  isPlayable?: boolean;
-  audioPreview?: { url?: string } | null;
-};
-
-type EmbedEntity = {
-  name?: string;
-  trackList?: EmbedTrack[];
-};
-
 export type IngestedPlaylist = { playlistId: string; playlistName: string; tracks: Track[] };
 
 /**
- * Reads a playlist through the public embed widget rather than the Web API.
- *
- * The Web API is no longer usable for this: Client Credentials tokens can't read
- * playlist contents at all, and a user token can only read playlists its *own*
- * account owns — a public playlist made by someone else answers 403 even when
- * the account follows it. Since the whole game is guests bringing their own
- * playlists, that left no API path. The embed page at open.spotify.com/embed/…
- * serves the tracklist to anyone, logged in or not, and carries a preview mp3
- * per track as a bonus.
- *
- * The trade: this is not a documented API and Spotify makes no promise about it.
- * If the payload shape changes, ingest breaks and every path here surfaces a
- * message rather than a stack trace.
+ * Read a public playlist into `Track`s.
  *
  * `contributor` is the guest's name — the clue and the "same playlist" guess
  * tier both name the person, not the playlist. SPEC §1.5.
  *
- * The whole result — embed read plus the Web API metadata pass — is cached in
- * Redis for a few minutes, because the same playlist is often ingested more
- * than once in quick succession (a re-join, or friends sharing a playlist
- * across lobbies), and every ingest is one more hit on an undocumented embed
- * page we'd rather not lean on. The TTL is short since playlists get edited;
- * see PLAYLIST_TTL_SECONDS. The contributor is stamped per caller, never
- * cached.
+ * The whole result is cached in Redis for a few minutes, because the same
+ * playlist is often ingested more than once in quick succession (a re-join, or
+ * friends sharing a playlist across lobbies) and a 500-track playlist is five
+ * API calls. The TTL is short since playlists get edited; see
+ * PLAYLIST_TTL_SECONDS. The contributor is stamped per caller, never cached.
  */
 export async function ingestPlaylist(
   playlistId: string,
@@ -109,63 +87,52 @@ export async function ingestPlaylist(
     };
   }
 
-  const entity = await fetchEmbedEntity(playlistId);
-  const playlistName = entity.name?.trim() || 'Untitled playlist';
+  const head = await fetchPlaylistHead(playlistId);
+  const playlistName = head.name?.trim() || 'Untitled playlist';
+  const total = Math.min(head.tracks?.total ?? MAX_TRACKS_PER_PLAYLIST, MAX_TRACKS_PER_PLAYLIST);
 
   const tracks: Track[] = [];
   const seen = new Set<string>();
 
-  for (const entry of entity.trackList ?? []) {
-    const id = trackIdFromUri(entry?.uri);
-    // Local files carry a spotify:local: uri and no id; unplayable tracks are
-    // region-blocked or pulled from the catalogue. SPEC §3.1.4.
-    if (!id || !entry.title || entry.isPlayable === false) continue;
-    if (seen.has(id)) continue;
-    seen.add(id);
+  for (let offset = 0; offset < total; offset += PAGE_SIZE) {
+    const page = await fetchTrackPage(playlistId, offset);
+    if (page.length === 0) break;
 
-    const artists = parseArtists(entry.subtitle);
-    if (artists.length === 0) continue;
+    for (const item of page) {
+      const entry = item.track;
+      // Local files carry no id, and a track pulled from the catalogue comes
+      // back as a null `track`. SPEC §3.1.4.
+      if (item.is_local || !entry?.id || !entry.name) continue;
+      if (seen.has(entry.id)) continue;
+      seen.add(entry.id);
 
-    tracks.push({
-      spotifyId: id,
-      title: entry.title,
-      artists,
-      // The embed carries no album art. It comes from the iTunes match when a
-      // track is picked as the secret, the only place it's shown. lib/itunes.ts.
-      albumArt: null,
-      // All filled in below, in one Web API pass over the whole tracklist.
-      releaseYear: null,
-      // Deezer's job, and only for the tracks that end up pooled. See
-      // lib/deezer.ts and the start route.
-      popularity: null,
-      pooled: false,
-      explicit: null,
-      durationMs: null,
-      albumName: null,
-      albumType: null,
-      previewUrl: entry.audioPreview?.url ?? null,
-      playlistId,
-      contributor,
-    });
+      const artists = parseArtists(entry.artists);
+      if (artists.length === 0) continue;
 
-    if (tracks.length >= MAX_TRACKS_PER_PLAYLIST) break;
+      tracks.push({
+        spotifyId: entry.id,
+        title: entry.name,
+        artists,
+        albumArt: pickArtwork(entry.album?.images),
+        releaseYear: parseYear(entry.album?.release_date),
+        popularity: typeof entry.popularity === 'number' ? entry.popularity : null,
+        explicit: typeof entry.explicit === 'boolean' ? entry.explicit : null,
+        durationMs: typeof entry.duration_ms === 'number' ? entry.duration_ms : null,
+        albumName: entry.album?.name?.trim() || null,
+        albumType: entry.album?.album_type ?? null,
+        previewUrl: entry.preview_url ?? null,
+        playlistId,
+        contributor,
+      });
+
+      if (tracks.length >= MAX_TRACKS_PER_PLAYLIST) break;
+    }
+
+    if (tracks.length >= MAX_TRACKS_PER_PLAYLIST || page.length < PAGE_SIZE) break;
   }
 
   if (tracks.length === 0) {
     throw new IngestError('We can read that playlist, but there are no playable songs in it.', 400);
-  }
-
-  // Doing it here rather than at pick time means the values are in the pool in
-  // Redis, so re-rolls and later rounds cost nothing.
-  const meta = await fetchTrackMeta(tracks.map((t) => t.spotifyId));
-  for (const track of tracks) {
-    const extra = meta.get(track.spotifyId);
-    if (!extra) continue;
-    track.releaseYear = extra.releaseYear;
-    track.explicit = extra.explicit;
-    track.durationMs = extra.durationMs;
-    track.albumName = extra.albumName;
-    track.albumType = extra.albumType;
   }
 
   const result: IngestedPlaylist = { playlistId, playlistName, tracks };
@@ -200,80 +167,163 @@ async function writePlaylistCache(result: IngestedPlaylist): Promise<void> {
   }
 }
 
-async function fetchEmbedEntity(playlistId: string): Promise<EmbedEntity> {
+// --- the Web API -------------------------------------------------------------
+
+type SpotifyImage = { url?: string; width?: number | null; height?: number | null };
+
+type ApiTrack = {
+  id?: string | null;
+  name?: string;
+  popularity?: number;
+  explicit?: boolean;
+  duration_ms?: number;
+  preview_url?: string | null;
+  artists?: { id?: string | null; name?: string }[];
+  album?: {
+    name?: string;
+    album_type?: string;
+    release_date?: string;
+    images?: SpotifyImage[];
+  };
+};
+
+type PlaylistHead = { name?: string; tracks?: { total?: number } };
+type TrackItem = { is_local?: boolean; track?: ApiTrack | null };
+
+async function fetchPlaylistHead(playlistId: string): Promise<PlaylistHead> {
+  return apiGet<PlaylistHead>(`/playlists/${playlistId}?fields=name,tracks(total)`);
+}
+
+async function fetchTrackPage(playlistId: string, offset: number): Promise<TrackItem[]> {
+  const body = await apiGet<{ items?: TrackItem[] }>(
+    `/playlists/${playlistId}/tracks?limit=${PAGE_SIZE}&offset=${offset}` +
+      `&fields=${encodeURIComponent(TRACK_FIELDS)}`,
+  );
+  return body.items ?? [];
+}
+
+/**
+ * One authenticated GET, with a single retry on an expired token.
+ *
+ * Every failure mode here becomes an `IngestError` with a message a guest can
+ * act on, because the only caller is the join route and the only reader is
+ * somebody's phone.
+ */
+async function apiGet<T>(path: string, retried = false): Promise<T> {
+  const token = await accessToken();
+  if (!token) {
+    throw new IngestError("Spotify isn't configured on this server.", 500);
+  }
+
   let res: Response;
   try {
-    res = await fetch(`https://open.spotify.com/embed/playlist/${playlistId}`, {
-      headers: { 'user-agent': UA, accept: 'text/html' },
+    res = await fetch(`https://api.spotify.com/v1${path}`, {
+      headers: { authorization: `Bearer ${token.value}` },
       cache: 'no-store',
     });
   } catch {
     throw new IngestError("Couldn't reach Spotify. Try again in a moment.", 502);
   }
 
+  if (res.ok) return (await res.json()) as T;
+
+  // 401 is an expired token — ours may have been minted by another instance, or
+  // the broker's may have been rotated under us. 403 on the *first* call of an
+  // instance means our own app lacks the quota this endpoint needs; both are
+  // worth one retry against a freshly sourced token. See `accessToken`.
+  if ((res.status === 401 || res.status === 403) && !retried) {
+    await invalidateToken(token.source);
+    if (res.status === 403) ownAppUsable = false;
+    return apiGet<T>(path, true);
+  }
+
   if (res.status === 404) {
-    throw new IngestError('Spotify has no playlist at that link.', 404);
-  }
-  if (res.status === 429) {
-    throw new IngestError('Spotify is rate-limiting us. Wait a few seconds and try again.', 429);
-  }
-  if (!res.ok) {
-    throw new IngestError('Spotify returned an error while reading that playlist.', 502);
-  }
-
-  const html = await res.text();
-  const match = html.match(NEXT_DATA);
-  if (!match) {
-    throw new IngestError("Couldn't read that playlist from Spotify.", 502);
-  }
-
-  let entity: EmbedEntity | undefined;
-  try {
-    const data = JSON.parse(match[1]) as {
-      props?: { pageProps?: { state?: { data?: { entity?: EmbedEntity } } } };
-    };
-    entity = data.props?.pageProps?.state?.data?.entity;
-  } catch {
-    throw new IngestError("Couldn't read that playlist from Spotify.", 502);
-  }
-
-  // Private and nonexistent playlists both answer 200 with the shell of the page
-  // and no entity at all, so this — not the 404 above — is the branch that
-  // actually fires for a bad link. SPEC §3.1.6.
-  if (!entity || !Array.isArray(entity.trackList)) {
     throw new IngestError(
       "Spotify won't show us that playlist. It's private, or the link is wrong. If it's yours: open it in Spotify, tap ⋯ → Edit details → Public, then paste the link again.",
       404,
     );
   }
-
-  return entity;
+  if (res.status === 429) {
+    throw new IngestError('Spotify is rate-limiting us. Wait a few seconds and try again.', 429);
+  }
+  throw new IngestError('Spotify returned an error while reading that playlist.', 502);
 }
 
-// --- catalogue metadata (Web API) -------------------------------------------
+// --- tokens ------------------------------------------------------------------
 
 /**
- * Cached app token. Module-level, so it lives as long as the serverless
- * instance does — a cold start pays one extra POST, which is not worth moving
- * into Redis for.
- */
-let tokenCache: { token: string; expires: number } | null = null;
-
-/**
- * Client Credentials token, or null when the app has no credentials configured.
+ * Reading a playlist needs an app in **extended quota mode** — see lib/broker.ts
+ * for what that rules out and why. The token comes from an app that has it, in
+ * this order:
  *
- * This is the one thing an app token *can* do for us. Reading a guest's
- * playlist through the Web API is still impossible for the reasons in the
- * `ingestPlaylist` comment above — but `GET /v1/tracks` is plain catalogue
- * metadata, needs no user, and survived the November 2024 deprecation that took
- * `audio-features` and the API's own preview URLs with it.
+ * 1. **SPOTIFY_TOKEN_OVERRIDE**, a token pasted in by hand. The escape hatch for
+ *    local development, where the broker is unreachable (Node TLS) and the Edge
+ *    route below is emulated on Node and so is unreachable too.
+ * 2. **This deployment's own app**, if SPOTIFY_CLIENT_ID/SECRET are set and the
+ *    API actually answers for them. If the app ever gets extended quota mode,
+ *    this is the only path taken and nothing else here runs.
+ * 3. **Chosic's, brokered**, via the Edge route.
+ *
+ * The verdict on (2) is remembered per instance: `null` until the first request
+ * decides it, then sticky. A 403 flips it to false in `apiGet` and the retry
+ * goes to the broker.
  */
-async function appToken(): Promise<string | null> {
+let ownAppUsable: boolean | null = null;
+
+type TokenSource = 'own' | 'broker';
+type AccessToken = { value: string; source: TokenSource };
+
+/** In-process cache, so a warm instance re-uses a token for its whole lifetime. */
+const cached = new Map<TokenSource, { value: string; expiresAt: number }>();
+
+async function accessToken(): Promise<AccessToken | null> {
+  const override = process.env.SPOTIFY_TOKEN_OVERRIDE;
+  if (override) return { value: override, source: 'own' };
+
+  if (ownAppUsable !== false) {
+    const own = await ownAppToken();
+    if (own) return { value: own, source: 'own' };
+    // No credentials configured at all. Don't keep asking.
+    ownAppUsable = false;
+  }
+
+  const brokered = await brokeredToken();
+  return brokered ? { value: brokered, source: 'broker' } : null;
+}
+
+async function invalidateToken(source: TokenSource): Promise<void> {
+  cached.delete(source);
+  if (source === 'broker') {
+    try {
+      await redis().del(keys.spotifyToken());
+    } catch {
+      // Worst case the next instance re-reads a token we know is stale and
+      // burns its own retry on it.
+    }
+  }
+}
+
+function remember(source: TokenSource, value: string, expiresInSeconds: number): string {
+  cached.set(source, {
+    value,
+    expiresAt: Date.now() + Math.max(expiresInSeconds - TOKEN_SLACK_SECONDS, 30) * 1000,
+  });
+  return value;
+}
+
+function fresh(source: TokenSource): string | null {
+  const entry = cached.get(source);
+  return entry && Date.now() < entry.expiresAt ? entry.value : null;
+}
+
+/** Client Credentials against this deployment's own app, when it has one. */
+async function ownAppToken(): Promise<string | null> {
   const id = process.env.SPOTIFY_CLIENT_ID;
   const secret = process.env.SPOTIFY_CLIENT_SECRET;
   if (!id || !secret) return null;
 
-  if (tokenCache && Date.now() < tokenCache.expires) return tokenCache.token;
+  const hit = fresh('own');
+  if (hit) return hit;
 
   const basic = Buffer.from(`${id}:${secret}`).toString('base64');
 
@@ -296,79 +346,99 @@ async function appToken(): Promise<string | null> {
   const body = (await res.json()) as { access_token?: string; expires_in?: number };
   if (!body.access_token) return null;
 
-  // 60s of slack, so a token can't expire between two batches of one ingest.
-  tokenCache = {
-    token: body.access_token,
-    expires: Date.now() + ((body.expires_in ?? 3600) - 60) * 1000,
-  };
-  return tokenCache.token;
+  return remember('own', body.access_token, body.expires_in ?? 3600);
 }
-
-export type TrackMeta = {
-  releaseYear: number | null;
-  explicit: boolean | null;
-  durationMs: number | null;
-  albumName: string | null;
-  albumType: string | null;
-};
 
 /**
- * Catalogue metadata per track id, for the ids Spotify answers for. All of it
- * feeds the loading screen (SPEC §1.2); par is Deezer's job now, since Spotify
- * no longer returns `popularity` to an app like this one on any endpoint.
- *
- * Never throws and never rejects an ingest: a missing credential or a bad
- * response degrades to blander loading lines rather than a guest who can't join.
+ * The brokered token, cached in Redis so the whole deployment shares one rather
+ * than every cold instance asking again. Chosic caches server-side too and
+ * hands the same token to everyone until it expires, so this mostly keeps our
+ * traffic off them.
  */
-export async function fetchTrackMeta(ids: string[]): Promise<Map<string, TrackMeta>> {
-  const out = new Map<string, TrackMeta>();
-  if (ids.length === 0) return out;
+async function brokeredToken(): Promise<string | null> {
+  const hit = fresh('broker');
+  if (hit) return hit;
 
-  const token = await appToken();
-  if (!token) return out;
-
-  let next = 0;
-
-  const worker = async (): Promise<void> => {
-    while (next < ids.length) {
-      const id = ids[next++];
-
-      try {
-        const res = await fetch(`https://api.spotify.com/v1/tracks/${id}`, {
-          headers: { authorization: `Bearer ${token}` },
-          cache: 'no-store',
-        });
-        // 404 for an id Spotify no longer knows, 429 if we've been too eager.
-        if (!res.ok) continue;
-
-        const track = (await res.json()) as SpotifyTrack;
-        if (!track?.id) continue;
-
-        out.set(track.id, {
-          releaseYear: parseYear(track.album?.release_date),
-          explicit: typeof track.explicit === 'boolean' ? track.explicit : null,
-          durationMs: typeof track.duration_ms === 'number' ? track.duration_ms : null,
-          albumName: track.album?.name?.trim() || null,
-          albumType: track.album?.album_type ?? null,
-        });
-      } catch {
-        // Next id; this track just keeps its nulls.
-      }
+  try {
+    const shared = await redis().get<{ value: string; expiresAt: number }>(keys.spotifyToken());
+    if (shared && Date.now() < shared.expiresAt) {
+      cached.set('broker', shared);
+      return shared.value;
     }
-  };
+  } catch {
+    // Fall through to a live fetch.
+  }
 
-  await Promise.all(Array.from({ length: META_CONCURRENCY }, worker));
+  const minted = await mintBrokeredToken();
+  if (!minted) return null;
 
-  return out;
+  remember('broker', minted.value, minted.expiresIn);
+  try {
+    await redis().set(keys.spotifyToken(), cached.get('broker'), {
+      ex: Math.max(minted.expiresIn - TOKEN_SLACK_SECONDS, 60),
+    });
+  } catch {
+    // In-process cache still holds it for this instance.
+  }
+  return minted.value;
 }
 
-type SpotifyTrack = {
-  id?: string;
-  popularity?: number;
-  explicit?: boolean;
-  duration_ms?: number;
-  album?: { name?: string; album_type?: string; release_date?: string };
-};
+/**
+ * Mint a fresh brokered token.
+ *
+ * On the Edge runtime this is the broker call itself. Everywhere else — which
+ * in practice means every route in this app, since they all need `node:crypto`
+ * — it is one hop through the Edge route, because Node's TLS handshake is what
+ * Cloudflare refuses. lib/broker.ts has the finding in full.
+ */
+async function mintBrokeredToken(): Promise<BrokeredToken | null> {
+  if (process.env.NEXT_RUNTIME === 'edge') return fetchBrokeredToken();
+
+  const secret = process.env.INTERNAL_API_SECRET;
+  if (!secret) return null;
+
+  try {
+    const res = await fetch(`${baseUrl()}/api/internal/spotify-token`, {
+      method: 'POST',
+      headers: { 'x-internal-secret': secret },
+      cache: 'no-store',
+    });
+    if (!res.ok) return null;
+
+    const body = (await res.json()) as Partial<BrokeredToken>;
+    return body.value ? { value: body.value, expiresIn: body.expiresIn ?? 3600 } : null;
+  } catch {
+    return null;
+  }
+}
+
+// --- payload helpers ---------------------------------------------------------
+
+/**
+ * The reveal renders album art on a small tile at 2x, so the 300px image is the
+ * one to take. Spotify orders `images` largest first but documents no
+ * guarantee, so pick by width rather than by index.
+ */
+function pickArtwork(images?: SpotifyImage[]): string | null {
+  if (!images?.length) return null;
+
+  let best: SpotifyImage | null = null;
+  for (const image of images) {
+    if (!image.url) continue;
+    if (!best) {
+      best = image;
+      continue;
+    }
+    const width = image.width ?? 0;
+    const bestWidth = best.width ?? 0;
+    // Smallest image at least 300px wide; failing that, the largest there is.
+    const betterFit = width >= 300 && (bestWidth < 300 || width < bestWidth);
+    const betterFallback = bestWidth < 300 && width > bestWidth;
+    if (betterFit || betterFallback) best = image;
+  }
+
+  return best?.url ?? null;
+}
 
 /** `release_date` is `YYYY`, `YYYY-MM` or `YYYY-MM-DD` depending on precision. */
 function parseYear(date?: string): number | null {
@@ -376,26 +446,13 @@ function parseYear(date?: string): number | null {
   return Number.isFinite(year) && year > 1900 ? year : null;
 }
 
-function trackIdFromUri(uri?: string): string | null {
-  const match = uri?.match(/^spotify:track:([A-Za-z0-9]{22})$/);
-  return match ? match[1] : null;
-}
-
 /**
- * The embed gives one `subtitle` string instead of an artist array. Spotify
- * joins collaborators with ", " and nothing else — "STARSET, Breaking Benjamin,
- * Judge & Jury" is three artists, the last of them a band with an ampersand in
- * its name — so comma is the only safe separator. A band whose own name has a
- * comma ("Tyler, The Creator") splits wrongly; that costs a display label, not
- * a match, since every entry in the pool splits the same way.
- *
- * Artist ids aren't in the payload. `artistKey` already falls back to the
- * normalised name, so the artist guess tier is unaffected.
+ * Artist ids come through now, which is what `artistKey` prefers — the artist
+ * guess tier no longer has to decide whether two spellings are the same band.
  */
-function parseArtists(subtitle?: string): Artist[] {
-  return (subtitle ?? '')
-    .split(',')
-    .map((name) => name.trim())
-    .filter(Boolean)
-    .map((name) => ({ id: null, name }));
+function parseArtists(artists?: { id?: string | null; name?: string }[]): Artist[] {
+  return (artists ?? []).flatMap((artist) => {
+    const name = artist.name?.trim();
+    return name ? [{ id: artist.id ?? null, name }] : [];
+  });
 }

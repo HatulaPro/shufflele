@@ -1,25 +1,17 @@
 import type { NextRequest, NextResponse } from 'next/server';
 import { fail, json } from '@/lib/http';
 import { findItunesMatch } from '@/lib/itunes';
-import { applyCachedPopularity, fillPopularity } from '@/lib/deezer';
-import { loadTracks, randomToken, requireHost, saveLobby, saveRound, saveTracks } from '@/lib/lobby';
+import { loadTracks, randomToken, requireHost, saveLobby, saveRound } from '@/lib/lobby';
 import { parFor } from '@/lib/par';
 import { consumeGameCredit, refundGameCredit } from '@/lib/ratelimit';
 import { baseUrl, createSeparation } from '@/lib/replicate';
-import { pickSecret, samplePool } from '@/lib/select';
+import { pickSecret } from '@/lib/select';
 import type { Round, Track } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 const MAX_PICK_ATTEMPTS = 8;
-
-/**
- * Wall-clock ceiling on the Deezer pass. Vercel Hobby allows 300s per function
- * (fluid compute), so the limit here is the host staring at a button, not the
- * platform. Whatever doesn't resolve in time keeps a null popularity.
- */
-const POPULARITY_BUDGET_MS = 25_000;
 
 type Ctx = { params: Promise<{ code: string }> };
 
@@ -46,23 +38,6 @@ export async function POST(_req: NextRequest, ctx: Ctx): Promise<NextResponse> {
     );
   }
 
-  // The pool is drawn once, on the first round, and reused for the rest of the
-  // lobby. It can't happen at join time: the per-playlist quota is the total
-  // divided by how many playlists there turn out to be, and players arrive one
-  // at a time. Everything not drawn stays in Redis for the guess-modal search.
-  if (!pool.some((track) => track.pooled)) {
-    // Cache first, over the whole tracklist: anything a previous lobby already
-    // scored gets pooled for free, and the Deezer budget is spent only on
-    // tracks the cache couldn't answer. lib/deezer.ts, lib/select.ts.
-    const resolved = await applyCachedPopularity(pool);
-    const pooled = samplePool(pool, resolved);
-    await fillPopularity(
-      pooled.filter((track) => !resolved.has(track.spotifyId)),
-      POPULARITY_BUDGET_MS,
-    );
-    await saveTracks(code, pool);
-  }
-
   // Selection and preview resolution are one loop, because a picked track may
   // have neither a Spotify preview nor an iTunes match. SPEC §3.2.
   const excluded = new Set([...lobby.usedTrackIds, ...lobby.unusableTrackIds]);
@@ -70,30 +45,32 @@ export async function POST(_req: NextRequest, ctx: Ctx): Promise<NextResponse> {
   let previewUrl: string | null = null;
 
   for (let attempt = 0; attempt < MAX_PICK_ATTEMPTS; attempt++) {
-    const eligible = pool.filter((t) => t.pooled && !excluded.has(t.spotifyId));
+    const eligible = pool.filter((t) => !excluded.has(t.spotifyId));
     if (eligible.length === 0) break;
 
     // Playlist-uniform, then popularity-weighted inside it. See lib/select.ts.
     const track = pickSecret(eligible);
     if (!track) break;
 
-    // iTunes is the preview source. Spotify's own preview is the exact
-    // recording, which is tempting, but its length is wildly inconsistent —
-    // sampled across two playlists, only a third run the full ~30s and a third
-    // are under 20s (16s for Architects' "Curse"). A short clip makes for a
-    // bad round, so it's kept only as a fallback for tracks iTunes can't match
-    // at all, where the alternative is skipping the track entirely.
+    // iTunes is the preview source, and now the only thing it is asked for.
+    // Spotify's own preview is the exact recording, which is tempting, but its
+    // length is wildly inconsistent — sampled across two playlists, only a
+    // third run the full ~30s and a third are under 20s (16s for Architects'
+    // "Curse"). A short clip makes for a bad round, so it's kept only as a
+    // fallback for tracks iTunes can't match at all, where the alternative is
+    // skipping the track entirely. Roughly one track in seven has no Spotify
+    // preview either, and those are the ones a missed match costs us.
     //
-    // The lookup also carries album art and release year, which the embed has
-    // no field for and this is the only place that needs.
+    // Album art and release year used to come from here too. They arrive with
+    // the tracklist now, so a track iTunes fluffs still reveals properly.
     const match = await findItunesMatch(track);
     const preview = match?.previewUrl ?? track.previewUrl ?? null;
 
     if (preview) {
       chosen = {
         ...track,
-        albumArt: match?.albumArt ?? track.albumArt,
-        releaseYear: match?.releaseYear ?? track.releaseYear,
+        albumArt: track.albumArt ?? match?.albumArt ?? null,
+        releaseYear: track.releaseYear ?? match?.releaseYear ?? null,
       };
       previewUrl = preview;
       break;

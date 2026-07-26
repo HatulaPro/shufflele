@@ -1,7 +1,7 @@
 /**
- * Par comes from Spotify's `popularity` (0–100), fetched in bulk at ingest and
- * carried on the track object — no extra call at pick time. See
- * `fetchTrackMeta` in lib/spotify.ts.
+ * Par comes from Spotify's `popularity` (0–100), which arrives with the
+ * tracklist at ingest and is carried on the track object — no extra call at
+ * pick time, and no second source. See lib/spotify.ts.
  *
  * It's display-and-scoring only: it sets the difficulty header and what counts
  * as a good result, and never changes how many rows the round has. SPEC §1.3.
@@ -14,9 +14,9 @@
 export type Par = { par: number; difficulty: string };
 
 export function parFor(popularity: number | null): Par | null {
-  // No credentials configured, or Spotify didn't know the track. The round runs
-  // without a difficulty header rather than showing an invented one. Checked by
-  // type rather than against null: a track pooled before popularity existed is
+  // Spotify's payload omitted the field for this track. The round runs without
+  // a difficulty header rather than showing an invented one. Checked by type
+  // rather than against null: a track ingested before popularity existed is
   // still in Redis under a live lobby TTL, and has no such field at all.
   if (typeof popularity !== 'number') return null;
 

@@ -15,37 +15,21 @@ export type Track = {
   spotifyId: string;
   title: string;
   artists: Artist[];
-  /** Null at ingest — filled from the iTunes match when picked. See lib/itunes.ts. */
+  /** Album cover, ~300px. See `pickArtwork`. */
   albumArt: string | null;
-  /**
-   * From the album's release date at ingest, and overwritten by the iTunes match
-   * when the track is picked (iTunes knows single releases better). Null when the
-   * app has no Spotify credentials — then only the picked track ever has a year.
-   */
+  /** From the album's release date. */
   releaseYear: number | null;
   /**
-   * Popularity 0–100. Sourced from Deezer's `rank` and mapped onto Spotify's
-   * old scale (lib/deezer.ts) — Spotify itself stopped returning the field.
-   * Only ever filled for pooled tracks, and null when Deezer had no match.
-   * Drives par.
+   * Spotify's own popularity, 0–100. Drives par (lib/par.ts) and the selection
+   * weighting (lib/select.ts). Null only for a track whose payload omitted it.
    */
   popularity: number | null;
   /**
-   * Whether this track can be drawn as a secret. The pool is sampled once, at
-   * the first round, across all playlists — see `samplePool`. Everything else
-   * stays in Redis unpooled: it still shows up in the guess-modal search, so
-   * the search box never doubles as the answer set.
-   */
-  pooled: boolean;
-  /**
-   * The rest of what `GET /v1/tracks` hands back for free alongside popularity —
-   * no extra request, and it all feeds the loading-screen lines (lib/quips.ts).
-   * `audio_features` would be the interesting one (energy, tempo, danceability)
-   * but Spotify closed that endpoint to new apps in November 2024, so there is no
-   * way to know how loud or fast anybody's taste is.
+   * The rest of what the playlist payload hands back for free — no extra
+   * request, and it all feeds the loading-screen lines (lib/quips.ts).
    *
-   * Null on every track pooled before these fields existed, so read them with a
-   * `typeof` guard — a live lobby's pool sits in Redis under its own TTL.
+   * Null on every track ingested before these fields existed, so read them with
+   * a `typeof` guard — a live lobby's pool sits in Redis under its own TTL.
    */
   explicit: boolean | null;
   durationMs: number | null;
@@ -53,7 +37,7 @@ export type Track = {
   /** `album` | `single` | `compilation`. */
   albumType: string | null;
   /**
-   * Spotify's own preview, when the embed carried one. A fallback only — its
+   * Spotify's own preview, where the catalogue has one. A fallback only — its
    * length is inconsistent (often well under 30s), so iTunes wins. See the
    * pick loop in the start route.
    */

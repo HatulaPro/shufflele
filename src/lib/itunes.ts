@@ -41,10 +41,11 @@ export type ItunesMatch = {
 /**
  * Best iTunes match for a track. Returns null when nothing scores high enough.
  *
- * This resolves two things at once: a 30s preview mp3 (SPEC §3.2), and the album
- * art and release year, which the Spotify embed doesn't carry. A track that has
- * its own preview from the embed still comes through here for the artwork — it
- * just no longer matters if the lookup misses.
+ * This exists for one thing: a reliably 30-second preview mp3 (SPEC §3.2).
+ * Spotify's own preview is inconsistent in length and absent for roughly one
+ * track in seven, so it is only the fallback. The album art and release year
+ * below are a leftover convenience — the tracklist supplies both now, and the
+ * start route prefers Spotify's.
  */
 export async function findItunesMatch(track: Track): Promise<ItunesMatch | null> {
   const artist = track.artists[0]?.name ?? '';
