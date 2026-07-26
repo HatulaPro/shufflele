@@ -20,41 +20,57 @@ import type { Player, Track } from './types';
  *   two together would hand out the `playlist` tier for free. A wide era *range*
  *   is fine; it says almost nothing. SPEC §1.5.
  *
- * That third rule is what shapes the popularity lines, which are new: the guess
- * screen shows a difficulty label derived straight from the secret's popularity
- * (lib/par.ts), so "everything Maya brought is obscure" plus a `Very hard`
- * header is the year leak again in another costume. Pool-wide shares name
- * nobody and are safe. The one per-player popularity line is a *spread*, for
- * the same reason the era line is: a range from 4 to 88 constrains nothing.
+ * That third rule is what shapes the popularity lines: the guess screen shows a
+ * difficulty label derived straight from the secret's popularity (lib/par.ts),
+ * so "everything Maya brought is obscure" plus a `Very hard` header is the year
+ * leak again in another costume. Pool-wide shares name nobody and are safe. The
+ * one per-player popularity line is a *spread*, for the same reason the era line
+ * is: a range from 4 to 88 constrains nothing.
+ *
+ * Popularity lines still get to name someone, via `blame`: a player drawn at
+ * random and pinned with a pool-wide fact that has nothing to do with them. It
+ * reads as an accusation and carries no information, which is the point — the
+ * name is noise, so it can't leak what the share doesn't already say. Every one
+ * of them is phrased as an obvious scapegoating rather than an attribution.
  *
  * What still isn't here: energy, tempo and loudness. `GET /v1/audio-features`
- * would answer "how jumpy is Maya's taste" directly and the token this app now
- * runs on can reach it, but that is a second request per round for a joke, and
- * the endpoint is deprecated besides.
+ * would answer "how shouty is Maya's taste" directly, and chosic's token plausibly
+ * still reaches it, but that is unverified, it is a second request per ingest,
+ * and the endpoint is deprecated. Everything below runs on the playlist payload.
  */
 
-const TARGET = 10;
+const TARGET = 20;
 
 /** House jokes. Also the safety net when the pool is too thin to mock. */
 const FILLER = [
   "It's not Despacito by Maroon 5",
   'No penguins in this prod',
   "It's okay to give up if it's from Ron's playlist",
-  "Everyone blames whoever's playlist it came from.",
-  'Someone here is about to get cocky.',
-  'This is the easy one, apparently.',
+  "Tip: always blame whoever's playlist it came from.",
+  'Shmip the Shmop'
 ];
 
-/** Aimed at a random player, no data required. Guarantees the screen has teeth. */
+/**
+ * Aimed at a random player, no data required. Guarantees the screen has teeth.
+ *
+ * These run *before* the round is playable — nobody has heard a stem or made a
+ * guess yet — so every line is either a prediction or a timeless insult. Nothing
+ * may react to play that hasn't happened ("nobody is asking you", "unearned
+ * confidence"); on a loading screen that reads as a bug, not a joke.
+ */
 const TAUNTS = [
-  (name: string) => `${name} is about to guess this wrong. Loudly.`,
-  (name: string) => `Whatever ${name} says, it isn't that.`,
+  (name: string) => `Tip: Don\'t let ${name} guess. Ever.`,
+  (name: string) => `Whatever ${name} is about to say, it isn't that.`,
   (name: string) => `${name}, sit this one out.`,
   (name: string) => `${name} has never once recognised the drums.`,
-  (name: string) => `Nobody is asking ${name}.`,
+  (name: string) => `Nobody will be asking ${name}.`,
   (name: string) => `${name} is already Googling.`,
   (name: string) => `${name} will say Imagine Dragons. `,
   (name: string) => `Please take ${possessive(name)} phone away.`,
+  (name: string) => `${name} is warming up a wrong answer.`,
+  (name: string) => `${possessive(name)} music taste peaked at fourteen.`,
+  (name: string) => `${possessive(name)} songs will fit well in my funeral.`,
+  (name: string) => `No way ${name} actually listens to their playlist.`,
 ];
 
 type Facts = ReturnType<typeof gather>;
@@ -179,10 +195,16 @@ const QUIPS: Quip[] = [
   // --- eras ---
 
   ({ eraSpread }) =>
-    eraSpread ? `${possessive(eraSpread.name)} taste spans ${eraSpread.range}. Chaos.` : null,
+    eraSpread
+      ? `${possessive(eraSpread.name)} taste spans ${eraSpread.range}. Unwell.`
+      : null,
 
-  ({ decade }) =>
-    decade && decade.share >= 30 ? `${decade.share}% of this pool is ${decade.label}. Predictable.` : null,
+  ({ decade, blame2 }) =>
+    decade && decade.share >= 30
+      ? blame2
+        ? `${decade.share}% of this is ${decade.label}. Grow up, ${blame2}.`
+        : `${decade.share}% of this pool is ${decade.label}. Predictable.`
+      : null,
 
   ({ bigYear }) =>
     bigYear && bigYear.share >= 12
@@ -193,31 +215,39 @@ const QUIPS: Quip[] = [
 
   ({ newest }) => (newest !== null ? `Freshest song here: ${newest}. Still damp.` : null),
 
-  // --- popularity (pool-wide only; see the header) ---
+  // --- popularity (pool-wide shares only, plus a scapegoat; see the header) ---
 
-  ({ obscureShare }) =>
+  ({ obscureShare, blame }) =>
     obscureShare !== null && obscureShare >= 25
-      ? `${obscureShare}% of this pool nobody has heard of.`
+      ? blame
+        ? `${obscureShare}% of this is unheard of. ${blame} looks guilty.`
+        : `${obscureShare}% of this pool nobody has heard of.`
       : null,
 
-  ({ hitShare }) =>
-    hitShare !== null && hitShare >= 30 ? `${hitShare}% of this pool is chart filler.` : null,
+  ({ hitShare, blame2 }) =>
+    hitShare !== null && hitShare >= 30
+      ? blame2
+        ? `${hitShare}% chart filler. Assuming ${blame2} did that.`
+        : `${hitShare}% of this pool is chart filler.`
+      : null,
 
   ({ meanPopularity }) =>
     meanPopularity !== null && meanPopularity >= 65
-      ? `This pool averages ${meanPopularity}/100. Radio.`
+      ? `Room averages ${meanPopularity}/100. Radio-brained, all of you.`
       : null,
 
-  ({ meanPopularity }) =>
+  ({ meanPopularity, blame }) =>
     meanPopularity !== null && meanPopularity <= 30
-      ? `This pool averages ${meanPopularity}/100. Nobody wins.`
+      ? `Averages ${meanPopularity}/100. Nobody here has friends${blame ? `, ${blame}` : ''}.`
       : null,
 
   ({ ceiling }) =>
-    ceiling !== null ? `Nothing in here cracks ${ceiling}/100. Deeply niche.` : null,
+    ceiling !== null ? `Nothing here cracks ${ceiling}/100. Insufferable.` : null,
 
   ({ popSpread }) =>
-    popSpread ? `${possessive(popSpread.name)} list runs ${popSpread.range}. No middle.` : null,
+    popSpread
+      ? `${possessive(popSpread.name)} list runs ${popSpread.range}. Pick a personality.`
+      : null,
 
   // --- titles ---
 
@@ -354,8 +384,16 @@ function gather(players: Player[], tracks: Track[]) {
   // production, and this way the share can never read 1500%.
   const [hog] = [...buckets.entries()].sort((a, b) => b[1].songs - a[1].songs);
 
+  // Two distinct names, drawn fresh every build, for the pool-wide lines to
+  // pin things on. Deliberately unrelated to the fact they accompany — see the
+  // header. Null in a one-player lobby, where a second name doesn't exist and
+  // the first would read as a real accusation.
+  const scapegoats = shuffle(players.map((p) => p.name));
+
   return {
     players: byTrackCount,
+    blame: players.length >= 2 ? scapegoats[0] ?? null : null,
+    blame2: players.length >= 2 ? scapegoats[1] ?? null : null,
     dupes: [...idPlaylists.values()].filter((set) => set.size >= 2).length,
     // Raw counts lie in a lobby of 400 songs, so every "how much" is a share.
     topArtist:
