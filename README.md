@@ -81,6 +81,17 @@ Worth knowing before relying on any of this:
 - **Local development needs `SPOTIFY_TOKEN_OVERRIDE`.** `next dev` emulates the Edge runtime on
   Node, so the broker is unreachable locally by the same TLS check. Paste an hour-long token in by
   hand; the curl command is in `.env.example`.
+- **To check a deployment**, `GET` the Edge route with the internal secret. It reports the raw
+  outcome of the broker call — including whether Cloudflare served its challenge page — without
+  returning the token:
+
+  ```bash
+  curl https://YOUR-APP.vercel.app/api/internal/spotify-token -H "x-internal-secret: THE_SECRET"
+  ```
+
+  `{"ok":true,...}` means Edge clears Cloudflare. `{"challenged":true,...}` means it does not, and
+  the token has to come from somewhere else. Ingest errors name the failing step too, rather than
+  a generic "not configured".
 
 One thing that got *better* along the way: Spotify's own editorial playlists (Today's Top Hits and
 friends) read fine on this token, where an ordinary app 404s them.

@@ -57,6 +57,33 @@ const HEADERS: Record<string, string> = {
  * `app/api/internal/spotify-token/route.ts`; Node callers go through that.
  */
 export async function fetchBrokeredToken(): Promise<BrokeredToken | null> {
+  const { token } = await callBroker();
+  return token;
+}
+
+/**
+ * The broker call, plus enough of what came back to tell a Cloudflare challenge
+ * apart from a genuine change at the other end. Never includes the token.
+ */
+export type BrokerProbe = {
+  ok: boolean;
+  status: number | null;
+  /** True when the body is Cloudflare's interstitial rather than the endpoint. */
+  challenged: boolean;
+  detail: string;
+};
+
+export async function probeBroker(): Promise<BrokerProbe> {
+  const { token, probe } = await callBroker();
+  return { ...probe, ok: token !== null };
+}
+
+async function callBroker(): Promise<{ token: BrokeredToken | null; probe: BrokerProbe }> {
+  const fail = (status: number | null, challenged: boolean, detail: string) => ({
+    token: null,
+    probe: { ok: false, status, challenged, detail },
+  });
+
   let res: Response;
   try {
     res = await fetch(ENDPOINT, {
@@ -65,20 +92,37 @@ export async function fetchBrokeredToken(): Promise<BrokeredToken | null> {
       body: `app=${APP}`,
       cache: 'no-store',
     });
-  } catch {
-    return null;
+  } catch (error) {
+    return fail(null, false, error instanceof Error ? error.message : 'network error');
   }
-  if (!res.ok) return null;
+
+  const text = await res.text();
+  // Cloudflare's managed challenge is an HTML page titled "Just a moment...".
+  const challenged = /just a moment|cf-browser-verification|challenge-platform/i.test(text);
+
+  if (!res.ok) {
+    return fail(
+      res.status,
+      challenged,
+      challenged
+        ? 'Cloudflare served its challenge page — this runtime\'s TLS handshake is being scored as a bot.'
+        : text.slice(0, 200),
+    );
+  }
 
   try {
     // The endpoint answers with a JSON *string* containing JSON, and `time` is
     // seconds of life left rather than an expiry stamp.
-    const outer = (await res.json()) as unknown;
+    const outer = JSON.parse(text) as unknown;
     const inner = typeof outer === 'string' ? (JSON.parse(outer) as unknown) : outer;
     const body = inner as { token?: string; time?: number };
-    if (!body.token) return null;
-    return { value: body.token, expiresIn: body.time ?? 3600 };
+    if (!body.token) return fail(res.status, challenged, 'no token field in the response');
+
+    return {
+      token: { value: body.token, expiresIn: body.time ?? 3600 },
+      probe: { ok: true, status: res.status, challenged: false, detail: 'token received' },
+    };
   } catch {
-    return null;
+    return fail(res.status, challenged, 'response was not JSON');
   }
 }

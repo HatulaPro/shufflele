@@ -212,7 +212,10 @@ async function fetchTrackPage(playlistId: string, offset: number): Promise<Track
 async function apiGet<T>(path: string, retried = false): Promise<T> {
   const token = await accessToken();
   if (!token) {
-    throw new IngestError("Spotify isn't configured on this server.", 500);
+    // Deliberately specific. Every way of reaching this is a deployment
+    // mistake or a dead broker, and "isn't configured" sent the last person
+    // looking in the wrong place.
+    throw new IngestError(`Spotify token unavailable — ${lastTokenFailure}`, 500);
   }
 
   let res: Response;
@@ -269,6 +272,12 @@ async function apiGet<T>(path: string, retried = false): Promise<T> {
  * goes to the broker.
  */
 let ownAppUsable: boolean | null = null;
+
+/**
+ * Why the last token attempt came back empty. There are four distinct causes
+ * with four different fixes, and they used to be one message.
+ */
+let lastTokenFailure = 'no attempt made yet.';
 
 type TokenSource = 'own' | 'broker';
 type AccessToken = { value: string; source: TokenSource };
@@ -392,22 +401,60 @@ async function brokeredToken(): Promise<string | null> {
  * Cloudflare refuses. lib/broker.ts has the finding in full.
  */
 async function mintBrokeredToken(): Promise<BrokeredToken | null> {
-  if (process.env.NEXT_RUNTIME === 'edge') return fetchBrokeredToken();
+  if (process.env.NEXT_RUNTIME === 'edge') {
+    const direct = await fetchBrokeredToken();
+    if (!direct) lastTokenFailure = 'the broker refused the Edge runtime too.';
+    return direct;
+  }
 
   const secret = process.env.INTERNAL_API_SECRET;
-  if (!secret) return null;
+  if (!secret) {
+    lastTokenFailure = 'INTERNAL_API_SECRET is not set on this deployment.';
+    return null;
+  }
+
+  const url = `${baseUrl()}/api/internal/spotify-token`;
+
+  const headers: Record<string, string> = { 'x-internal-secret': secret };
+  // The self-call leaves the deployment and comes back through the front door,
+  // where Deployment Protection sits on preview (and optionally production)
+  // deployments and answers with an SSO page instead of our route. Vercel sets
+  // this variable precisely so a deployment can call itself; absent on Hobby
+  // projects with protection off, where it isn't needed.
+  const bypass = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
+  if (bypass) headers['x-vercel-protection-bypass'] = bypass;
+
+  let res: Response;
+  try {
+    res = await fetch(url, { method: 'POST', headers, cache: 'no-store' });
+  } catch (error) {
+    lastTokenFailure = `could not reach ${url} (${error instanceof Error ? error.message : 'network error'}). Check NEXT_PUBLIC_BASE_URL.`;
+    return null;
+  }
+
+  if (!res.ok) {
+    // 401 here is almost always Vercel Deployment Protection answering instead
+    // of our route: the self-call leaves the deployment and comes back through
+    // the front door, where preview deployments demand an SSO cookie.
+    const hint =
+      res.status === 401
+        ? ' — this is Vercel Deployment Protection intercepting the self-call, not our route. Disable it for this deployment, or point NEXT_PUBLIC_BASE_URL at an unprotected origin.'
+        : res.status === 403
+          ? ' — the secret sent does not match INTERNAL_API_SECRET on the Edge side.'
+          : '';
+    lastTokenFailure = `${url} answered ${res.status}${hint}`;
+    return null;
+  }
 
   try {
-    const res = await fetch(`${baseUrl()}/api/internal/spotify-token`, {
-      method: 'POST',
-      headers: { 'x-internal-secret': secret },
-      cache: 'no-store',
-    });
-    if (!res.ok) return null;
-
     const body = (await res.json()) as Partial<BrokeredToken>;
-    return body.value ? { value: body.value, expiresIn: body.expiresIn ?? 3600 } : null;
+    if (!body.value) {
+      lastTokenFailure = 'the Edge route answered 200 with no token.';
+      return null;
+    }
+    return { value: body.value, expiresIn: body.expiresIn ?? 3600 };
   } catch {
+    lastTokenFailure = 'the Edge route returned a body that was not JSON.';
     return null;
   }
 }
