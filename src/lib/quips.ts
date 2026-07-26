@@ -41,6 +41,9 @@ import type { Player, Track } from './types';
 
 const TARGET = 20;
 
+/** Hebrew block, used to spot a playlist that never left the country. */
+const HEBREW = /[֐-׿]/;
+
 /** House jokes. Also the safety net when the pool is too thin to mock. */
 const FILLER = [
   "It's not Despacito by Maroon 5",
@@ -61,16 +64,15 @@ const FILLER = [
 const TAUNTS = [
   (name: string) => `Tip: Don\'t let ${name} guess. Ever.`,
   (name: string) => `Whatever ${name} is about to say, it isn't that.`,
-  (name: string) => `${name}, sit this one out.`,
-  (name: string) => `${name} has never once recognised the drums.`,
-  (name: string) => `Nobody will be asking ${name}.`,
+  (name: string) => `${name} has never once recognised the song.`,
   (name: string) => `${name} is already Googling.`,
-  (name: string) => `${name} will say Imagine Dragons. `,
+  (name: string) => `${name} will say Imagine Dragons.`,
   (name: string) => `Please take ${possessive(name)} phone away.`,
   (name: string) => `${name} is warming up a wrong answer.`,
   (name: string) => `${possessive(name)} music taste peaked at fourteen.`,
   (name: string) => `${possessive(name)} songs will fit well in my funeral.`,
   (name: string) => `No way ${name} actually listens to their playlist.`,
+  (name: string) => `${Math.floor(Math.random() * 1000)} racial slurs in ${name}'s playlist.`,
 ];
 
 type Facts = ReturnType<typeof gather>;
@@ -108,34 +110,40 @@ const QUIPS: Quip[] = [
   ({ players }) => {
     if (players.length < 2) return null;
     const [small] = players; // smallest first
-    return small ? `${small.trackCount} songs, ${small.name}? Weak.` : null;
+    return small ? `${small.trackCount} songs, ${small.name}? Pathetic.` : null;
   },
 
   ({ players }) => {
     if (players.length < 2) return null;
     const big = players[players.length - 1];
-    return big ? `${big.name} brought ${big.trackCount} songs. Nobody asked.` : null;
+    return big ? `${big.name} brought ${big.trackCount} songs. Nobody asked, nobody wanted.` : null;
   },
 
   ({ hog }) =>
-    hog && hog.share >= 45 ? `${hog.share}% of this pool is ${possessive(hog.name)}. Tyrant.` : null,
+    hog && hog.share >= 45
+      ? `${hog.share}% of this pool is ${possessive(hog.name)}. Fatty.`
+      : null,
 
   ({ players }) =>
-    players.length === 1 && players[0] ? `One playlist. This is all on ${players[0].name}.` : null,
+    players.length === 1 && players[0]
+      ? `One playlist. Every bad decision here is ${possessive(players[0].name)}.`
+      : null,
 
   ({ players }) => {
     if (players.length < 3) return null;
     const last = [...players].sort((a, b) => b.joinedAt - a.joinedAt)[0];
     const big = players[players.length - 1];
     return last && big && last.id === big.id
-      ? `${last.name} joined last, brought most. Needy.`
+      ? `${last.name} joined last and brought most. Desperate.`
       : null;
   },
 
   ({ twins }) =>
-    twins ? `${twins.who[0]} and ${twins.who[1]} brought ${twins.count} each. Copycats.` : null,
+    twins
+      ? `${twins.who[0]} and ${twins.who[1]} brought ${twins.count} each. One of you is redundant.`
+      : null,
 
-  ({ dupes }) => (dupes > 0 ? `${dupes} songs got brought twice. Original.` : null),
+  ({ dupes }) => (dupes > 0 ? `${dupes} songs got brought twice. Staggering originality.` : null),
 
   // --- taste ---
 
@@ -146,7 +154,7 @@ const QUIPS: Quip[] = [
 
   ({ obsessed }) =>
     obsessed
-      ? `${obsessed.share}% of ${possessive(obsessed.player)} list is ${obsessed.artist}. Seek help.`
+      ? `${obsessed.share}% of ${possessive(obsessed.player)} list is ${obsessed.artist}. Get a therapist.`
       : null,
 
   ({ sharedArtist }) =>
@@ -155,7 +163,9 @@ const QUIPS: Quip[] = [
       : null,
 
   ({ narrow }) =>
-    narrow ? `${narrow.artists} artists across ${narrow.songs} songs, ${narrow.name}? Bleak.` : null,
+    narrow
+      ? `Only ${narrow.artists} artists, ${narrow.name}? Try leaving the house.`
+      : null,
 
   ({ albumDump }) =>
     albumDump
@@ -164,7 +174,7 @@ const QUIPS: Quip[] = [
 
   ({ singles }) =>
     singles
-      ? `${singles.share}% of ${possessive(singles.name)} list is singles. No commitment.`
+      ? `${singles.share}% of ${possessive(singles.name)} list is singles. Commitment issues.`
       : null,
 
   // --- language ---
@@ -174,7 +184,11 @@ const QUIPS: Quip[] = [
       ? `${explicitPlayer.share}% of ${possessive(explicitPlayer.name)} list is explicit. Charming.`
       : null,
 
-  ({ cleanPlayer }) => (cleanPlayer ? `Not one swear word from ${cleanPlayer}. Sheltered.` : null),
+  ({ hebrewOnly }) =>
+    hebrewOnly ? `All Hebrew from ${hebrewOnly}. Akh Sheli.` : null,
+
+  ({ cleanPlayer }) =>
+    cleanPlayer ? `Not one swear word from ${cleanPlayer}.` : null,
 
   ({ explicitShare }) =>
     explicitShare !== null && explicitShare >= 30
@@ -183,9 +197,9 @@ const QUIPS: Quip[] = [
 
   // --- length ---
 
-  ({ epic }) => (epic ? `${epic.name} pooled a ${epic.length} song. Absolutely not.` : null),
+  ({ epic }) => (epic ? `${epic.name} pooled a ${epic.length} song. Who hurt you.` : null),
 
-  ({ tiny }) => (tiny ? `${tiny.name} pooled a ${tiny.length} song. That's a snippet.` : null),
+  ({ tiny }) => (tiny ? `${tiny.name} pooled a ${tiny.length} song. Like bro.` : null),
 
   ({ impatient }) =>
     impatient
@@ -196,7 +210,7 @@ const QUIPS: Quip[] = [
 
   ({ eraSpread }) =>
     eraSpread
-      ? `${possessive(eraSpread.name)} taste spans ${eraSpread.range}. Unwell.`
+      ? `${possessive(eraSpread.name)} taste spans ${eraSpread.range}. Damn.`
       : null,
 
   ({ decade, blame2 }) =>
@@ -213,40 +227,41 @@ const QUIPS: Quip[] = [
 
   ({ oldest }) => (oldest !== null ? `Something in here is from ${oldest}. Museum piece.` : null),
 
-  ({ newest }) => (newest !== null ? `Freshest song here: ${newest}. Still damp.` : null),
 
   // --- popularity (pool-wide shares only, plus a scapegoat; see the header) ---
 
   ({ obscureShare, blame }) =>
     obscureShare !== null && obscureShare >= 25
       ? blame
-        ? `${obscureShare}% of this is unheard of. ${blame} looks guilty.`
-        : `${obscureShare}% of this pool nobody has heard of.`
+        ? `A lot of this pool is unheard of. Classic ${blame}.`
+        : `A lot of this pool is genuinely unheard of.`
       : null,
 
   ({ hitShare, blame2 }) =>
     hitShare !== null && hitShare >= 30
       ? blame2
-        ? `${hitShare}% chart filler. Assuming ${blame2} did that.`
-        : `${hitShare}% of this pool is chart filler.`
+        ? `Heavy chart energy in here. Thanks, ${blame2}.`
+        : `This pool is basically a Top 50 playlist.`
       : null,
 
   ({ meanPopularity }) =>
     meanPopularity !== null && meanPopularity >= 65
-      ? `Room averages ${meanPopularity}/100. Radio-brained, all of you.`
+      ? `Top hits only. Basic.`
       : null,
 
   ({ meanPopularity, blame }) =>
     meanPopularity !== null && meanPopularity <= 30
-      ? `Averages ${meanPopularity}/100. Nobody here has friends${blame ? `, ${blame}` : ''}.`
+      ? blame
+        ? `Most of this pool is deep cuts. ${blame} is proud of that.`
+        : `Most of this pool is deep cuts. Bold strategy.`
       : null,
 
   ({ ceiling }) =>
-    ceiling !== null ? `Nothing here cracks ${ceiling}/100. Insufferable.` : null,
+    ceiling !== null ? `Nothing here is even slightly mainstream. Fascinating.` : null,
 
   ({ popSpread }) =>
     popSpread
-      ? `${possessive(popSpread.name)} list runs ${popSpread.range}. Pick a personality.`
+      ? `${possessive(popSpread.name)} list goes from underground to mainstream. Pick a lane.`
       : null,
 
   // --- titles ---
@@ -255,7 +270,15 @@ const QUIPS: Quip[] = [
 
   ({ titles }) => (titles.remix >= 20 ? `${titles.remix} remixes in here. Why.` : null),
 
-  ({ titles }) => (titles.xmas > 0 ? 'Somebody pooled a Christmas song. Bold.' : null),
+  ({ titles }) => (titles.xmas > 2 ? 'Somebody keeps putting Christmas songs.' : null),
+
+  ({ titles }) => (titles.money >= 3 ? `${titles.money} songs about money.` : null),
+
+  ({ titles }) => (titles.death >= 3 ? `${titles.death} songs about death.` : null),
+
+  ({ titles }) => (titles.booze >= 3 ? `${titles.booze} songs about drinking.` : null),
+
+  ({ titles }) => (titles.cali > 1 ? 'Somebody keeps writing songs about California.' : null),
 ];
 
 // --- one pass over the pool ---------------------------------------------
@@ -272,6 +295,7 @@ type Bucket = {
   explicitKnown: number;
   singles: number;
   typeKnown: number;
+  hebrew: number;
 };
 
 function gather(players: Player[], tracks: Track[]) {
@@ -298,7 +322,7 @@ function gather(players: Player[], tracks: Track[]) {
   const artists = new Map<string, { name: string; count: number; who: Set<string> }>();
   const years = new Map<number, number>();
   const decades = new Map<number, number>();
-  const titles = { love: 0, remix: 0, xmas: 0 };
+  const titles = { love: 0, remix: 0, xmas: 0, money: 0, death: 0, booze: 0, cali: 0 };
 
   let oldest: number | null = null;
   let newest: number | null = null;
@@ -338,6 +362,13 @@ function gather(players: Player[], tracks: Track[]) {
     if (lower.includes('love')) titles.love++;
     if (/remix|edit\b|rework/.test(lower)) titles.remix++;
     if (/christmas|xmas|santa|jingle|sleigh/.test(lower)) titles.xmas++;
+    // `\$\d` catches Ca$h-style spellings without matching artist names like A$AP.
+    if (/money|dollar|\bcash\b|\brich\b|\$\d/.test(lower)) titles.money++;
+    if (/\bdie\b|\bdying\b|\bdead\b|death|funeral|\bgrave\b|\bkill(s|ed|ing)?\b/.test(lower))
+      titles.death++;
+    if (/whiske?y|\bwine\b|drunk|\bbeer\b|tequila|vodka|\bbottle\b|hangover/.test(lower))
+      titles.booze++;
+    if (/california|hollywood|malibu/.test(lower)) titles.cali++;
   }
 
   const buckets = new Map<string, Bucket>();
@@ -356,6 +387,7 @@ function gather(players: Player[], tracks: Track[]) {
         explicitKnown: 0,
         singles: 0,
         typeKnown: 0,
+        hebrew: 0,
       };
       buckets.set(track.contributor, bucket);
     }
@@ -371,6 +403,9 @@ function gather(players: Player[], tracks: Track[]) {
       bucket.explicitKnown++;
       if (track.explicit) bucket.explicit++;
     }
+    // Script, not language: an Israeli artist with a Latin-spelled name still
+    // counts if the song title is written in Hebrew, which is the common case.
+    if (HEBREW.test(track.title) || track.artists.some((a) => HEBREW.test(a.name))) bucket.hebrew++;
     if (track.albumType) {
       bucket.typeKnown++;
       if (track.albumType === 'single') bucket.singles++;
@@ -509,6 +544,11 @@ function playerFacts(buckets: Map<string, Bucket>) {
     return share >= 25 ? { score: share, share } : null;
   });
 
+  // Only the all-in case is funny; a mixed list is just a list.
+  const hebrewOnly = best(rows, ({ b }) =>
+    b.songs >= 6 && b.hebrew / b.songs >= 0.9 ? { score: b.songs } : null,
+  );
+
   const cleanPlayer = best(rows, ({ b }) =>
     b.explicitKnown >= 10 && b.explicit === 0 ? { score: b.explicitKnown } : null,
   );
@@ -523,6 +563,7 @@ function playerFacts(buckets: Map<string, Bucket>) {
     popSpread,
     explicitPlayer,
     cleanPlayer: cleanPlayer?.name ?? null,
+    hebrewOnly: hebrewOnly?.name ?? null,
   };
 }
 
