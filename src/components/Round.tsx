@@ -18,8 +18,12 @@ type Props = {
   onClose: () => void;
 };
 
-/** How long each loading line stays on screen. SPEC §1.2. */
-const QUIP_SECONDS = 6;
+/**
+ * How long each loading line stays on screen. Long enough to read twice and
+ * still land — six seconds churned through the whole set before the stems were
+ * ready, which is what made them feel repetitive. SPEC §1.2.
+ */
+const QUIP_SECONDS = 11;
 /** Shown until the real lines arrive, and if the fetch fails outright. */
 const FALLBACK_QUIP = 'Digging through everyone’s questionable taste…';
 

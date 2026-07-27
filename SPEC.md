@@ -35,7 +35,7 @@ Private/personal project. Deployed to Vercel Hobby (non-commercial use only).
 1. Host taps **Start game**. Server picks a secret track from the pooled tracks.
 2. **Loading screen** while the preview is fetched and Demucs runs (~20–40s warm, up to ~2min
    cold). A progress bar, *"This usually takes a minute."*, and a one-liner about the pooled
-   playlists that changes every 6 seconds — *"3 songs, John? Weak."*, *"81% of this pool is
+   playlists that changes every 11 seconds — *"3 songs, John? Weak."*, *"81% of this pool is
    Maya's. Tyrant."* Short enough for a phone, name the player, insult them, stop. The pipeline is
    not narrated and the rules are not explained: which stem is being separated is nobody's
    entertainment, and the room already knows how the game works. Lines come from
@@ -54,7 +54,16 @@ Private/personal project. Deployed to Vercel Hobby (non-commercial use only).
    again. So pool-wide shares, which name nobody, and exactly one per-player line — a *spread*,
    safe for the same reason the era range is. Each per-player dig picks the *most* extreme playlist
    rather than the first that qualifies, so a lobby mocks the same person for the same thing every
-   round. Host phone polls status every 2s.
+   round.
+
+   **A group plays all evening and comes back next week, so repetition is the failure mode.** Every
+   observation carries four or more phrasings and one is drawn per build, and only **8 lines reach
+   the screen** out of the forty-odd a real pool produces — two rounds off an identical pool look
+   nothing alike. Thresholds are proportional for the same reason the counts are shares: 47 songs
+   is not a small playlist, so the line only fires, and only reaches its nastiest phrasing, when
+   the number earns it. Album names are matched against a vibe table and used to insult the
+   contributor, never printed — the name would narrow the secret to a tracklist. Host phone polls
+   status every 2s.
 3. **Guess screen** (the Bandle-like layout from the reference):
    - Header: song metadata that is *not* identifying — release year.
    - A vertical list of numbered rows. Row 1 is unlocked; the rest unlock as rows burn, and
