@@ -23,6 +23,21 @@ import type { Player, Track } from './types';
  *   next week. Every observation below carries four or more phrasings and one is
  *   drawn at random per build, and only `TARGET` lines survive to the screen, so
  *   two rounds off an identical pool look nothing alike.
+ * - **Legible from the room.** Nobody out there can see the test that fired the
+ *   line, so a line has to carry its own trigger. "Ron treated this like a job
+ *   interview" is a joke only the code gets; "Ron brought 200 songs to a party
+ *   game" is the same joke and lands. The number doesn't have to be printed, but
+ *   the *subject* — songs brought, one album, an artist, a swear, a duplicate —
+ *   does, or the line reads as a non-sequitur.
+ * - **Vary the shape.** Four phrasings that are all `Fact. Adjective.` are one
+ *   phrasing. Rotate through questions, imperatives, direct address, comparisons
+ *   and flat statements with no tag at all; the `Fact. Adjective.` shape is the
+ *   sharpest of them and stops working the moment it's the only one on screen.
+ *
+ * The taunts are the one place both of those relax, since they run on no data at
+ * all — but they may not *predict the round*, and they may not all be the same
+ * prediction. The guess screen shows the release year, so "they'll name the wrong
+ * decade" is a line the room can immediately disprove.
  *
  * That third rule is what shapes the popularity lines: the guess screen shows a
  * difficulty label derived straight from the secret's popularity (lib/par.ts),
@@ -104,15 +119,15 @@ const TAUNTS = [
   (name: string) => `${name} is warming up a wrong answer.`,
   (name: string) => `${possessive(name)} music taste peaked at fourteen.`,
   (name: string) => `No way ${name} actually listens to their playlist.`,
-  (name: string) => `${name} guesses confidently and incorrectly. Every time.`,
-  (name: string) => `Historical accuracy of ${possessive(name)} guesses: zero.`,
-  (name: string) => `${name} is going to name the wrong decade again.`,
-  (name: string) => `${name} has been flagged for review.`,
   (name: string) => `Somebody explain the rules to ${name}. Again.`,
-  (name: string) => `${name} thinks they've got this one. ${name} does not.`,
+  (name: string) => `Do not let ${name} near the volume.`,
   (name: string) => `${possessive(name)} playlist is a cry for help with a beat.`,
-  (name: string) => `${name} will hum it wrong and blame the speakers.`,
-  (name: string) => `Statistically, ${name} contributes nothing.`,
+  (name: string) => `${name} put a song in here specifically to look interesting.`,
+  (name: string) => `${possessive(name)} playlist has songs they've never heard.`,
+  (name: string) => `Nobody is going to admit they liked ${possessive(name)} songs.`,
+  (name: string) => `${name} has a Wrapped they have never shown anyone.`,
+  (name: string) => `${name} made half this playlist for somebody who isn't here.`,
+  (name: string) => `${name} added a song at 2am and forgot about it.`,
 ];
 
 type Facts = ReturnType<typeof gather>;
@@ -163,11 +178,11 @@ const QUIPS: Quip[] = [
   ({ slacker }) => {
     if (!slacker) return null;
     const { name, count, ratio } = slacker;
-    if (count <= 12) {
+    if (count <= 20) {
       return [
         `${count} songs, ${name}? Pathetic.`,
         `${count} songs, ${name}. Not a playlist, a shrug.`,
-        `Contribution from ${name}: ${count} tracks. Rounding error.`,
+        `Who told ${name} that ${count} songs was enough?`,
         `${count} songs from ${name}. We've seen ringtone libraries with more.`,
         `${name} showed up with ${count} songs and no shame.`,
       ];
@@ -176,14 +191,14 @@ const QUIPS: Quip[] = [
       return [
         `${name} brought half of what everyone else did.`,
         `${count} songs, ${name}. Everyone else managed more.`,
-        `${possessive(name)} share of this pool is embarrassing and deliberate.`,
+        `Everyone else brought double what ${name} did.`,
         `${name} is coasting on other people's playlists.`,
       ];
     }
     return [
       `${name} brought the fewest. Somebody had to.`,
-      `Smallest playlist: ${possessive(name)}. Not by much, but it counts.`,
-      `${count} songs from ${name}. Adequate. Barely.`,
+      `Smallest playlist: ${possessive(name)}.`,
+      `Only ${count} songs from ${name}.`,
       `${name} came last in a competition nobody announced.`,
     ];
   },
@@ -194,9 +209,9 @@ const QUIPS: Quip[] = [
     if (ratio >= 2) {
       return [
         `${name} brought ${count} songs. Nobody asked, nobody wanted.`,
-        `${name} brought twice what anyone else did. Nobody is impressed.`,
+        `Nobody asked ${name} for ${count} songs.`,
         `${count} songs from ${name}. A personality, not a playlist.`,
-        `${name} treated this like a job interview.`,
+        `${name} brought ${count} songs to a party game.`,
         `Volume from ${name}: ${count}. Quality: unverified.`,
       ];
     }
@@ -204,7 +219,7 @@ const QUIPS: Quip[] = [
       `${name} brought the most. Predictably.`,
       `Largest playlist: ${possessive(name)}, at ${count}.`,
       `${name} brought ${count} songs. Enthusiasm noted, taste pending.`,
-      `${name} came prepared. That's the problem.`,
+      `${name} came prepared and nobody else did.`,
     ];
   },
 
@@ -214,7 +229,7 @@ const QUIPS: Quip[] = [
       return [
         `${hog.share}% of this pool is ${possessive(hog.name)}. Tyrant.`,
         `${hog.name} isn't a player, ${hog.name} is the venue.`,
-        `${hog.share}% of everything here came from one person. Seek help.`,
+        `${hog.share}% of everything here came from one person.`,
         `This is ${possessive(hog.name)} playlist with witnesses.`,
       ];
     }
@@ -222,7 +237,7 @@ const QUIPS: Quip[] = [
       return [
         `${hog.share}% of this pool is ${possessive(hog.name)}. Fatty.`,
         `Nearly half of this is ${hog.name}. Nobody voted for that.`,
-        `${hog.name} accounts for ${hog.share}% of the pool. Overrepresented.`,
+        `Almost every other song tonight is ${possessive(hog.name)}.`,
         `${hog.name} took up more room than anyone invited them to.`,
       ];
     }
@@ -235,7 +250,7 @@ const QUIPS: Quip[] = [
       ? [
           `One playlist. Every bad decision here is ${possessive(solo.name)}.`,
           `${solo.name} is playing against themselves. And losing.`,
-          `Sample size: one playlist. Confidence in the diagnosis: total.`,
+          `${solo.name} is the only one who brought anything.`,
           `Nobody else showed up. That tracks, ${solo.name}.`,
         ]
       : null;
@@ -250,7 +265,7 @@ const QUIPS: Quip[] = [
           `${last.name} joined last and brought most. Desperate.`,
           `${last.name} was late and overcompensated.`,
           `Last in, biggest playlist. We see you, ${last.name}.`,
-          `${last.name} arrived with something to prove. Nobody asked.`,
+          `${last.name} joined last, then dumped the biggest playlist in.`,
         ]
       : null;
   },
@@ -259,9 +274,9 @@ const QUIPS: Quip[] = [
     twins
       ? [
           `${twins.who[0]} and ${twins.who[1]} brought ${twins.count} each. One of you is redundant.`,
-          `${twins.who[0]} and ${twins.who[1]}: identical counts. Suspicious.`,
+          `${twins.who[0]} and ${twins.who[1]} landed on the same number.`,
           `Two playlists, ${twins.count} songs each. Collusion.`,
-          `${twins.who[0]} and ${twins.who[1]} matched exactly. Get separate hobbies.`,
+          `Get separate hobbies, ${twins.who[0]} and ${twins.who[1]}.`,
         ]
       : null,
 
@@ -270,14 +285,14 @@ const QUIPS: Quip[] = [
     if (dupeShare >= 10) {
       return [
         `${dupeShare}% of this pool got brought twice. Staggering originality.`,
-        `${dupes} songs are in here more than once. Group think.`,
+        `${dupes} songs are in here more than once.`,
         `Playlist overlap: ${dupeShare}%. Nobody here has a personality.`,
         `${dupes} duplicates. You all listen to the same eleven songs.`,
       ];
     }
     return [
       `${dupes} songs got brought twice. Staggering originality.`,
-      `${dupes} duplicates detected. Somebody has no ideas.`,
+      `Somebody copied somebody. ${dupes} songs are in here twice.`,
       `${dupes} songs showed up twice. Two people, one taste.`,
       `${dupes} overlaps. Unremarkable, and still embarrassing.`,
     ];
@@ -291,7 +306,7 @@ const QUIPS: Quip[] = [
       return [
         `${topArtist.share}% of this pool is ${topArtist.name}. Grim.`,
         `One artist owns ${topArtist.share}% of this room. It's ${topArtist.name}.`,
-        `${topArtist.name} is nearly a tenth of everything here. Alarming.`,
+        `Roughly every tenth song tonight is ${topArtist.name}.`,
         `This isn't a pool, it's a ${topArtist.name} tribute night.`,
       ];
     }
@@ -300,7 +315,7 @@ const QUIPS: Quip[] = [
         `Most-brought artist: ${topArtist.name}, at ${topArtist.share}%.`,
         `${topArtist.name} leads the pool. Nobody should be proud.`,
         `${topArtist.share}% ${topArtist.name}. Slightly too much ${topArtist.name}.`,
-        `${topArtist.name} beat everyone else here. Low bar.`,
+        `More ${topArtist.name} in here than anybody else.`,
       ];
     }
     return null;
@@ -308,18 +323,18 @@ const QUIPS: Quip[] = [
 
   ({ obsessed }) => {
     if (!obsessed) return null;
-    if (obsessed.share >= 35) {
+    if (obsessed.share >= 15) {
       return [
         `${obsessed.share}% of ${possessive(obsessed.player)} list is ${obsessed.artist}. Get a therapist.`,
-        `${obsessed.player} has one artist and it's ${obsessed.artist}. Concerning.`,
-        `${obsessed.artist} makes up ${obsessed.share}% of ${possessive(obsessed.player)} playlist. That's a diagnosis.`,
-        `${obsessed.player} would like everyone to know about ${obsessed.artist}. Repeatedly.`,
+        `${obsessed.player} has one artist and it's ${obsessed.artist}.`,
+        `Does ${obsessed.player} listen to anyone except ${obsessed.artist}?`,
+        `Somebody tell ${obsessed.player} that other artists exist.`,
       ];
     }
     return [
       `${obsessed.share}% of ${possessive(obsessed.player)} list is ${obsessed.artist}. A lot.`,
-      `${obsessed.player} leans heavily on ${obsessed.artist}. Branch out.`,
-      `${possessive(obsessed.player)} most-played artist: ${obsessed.artist}. Unsurprising.`,
+      `Branch out, ${obsessed.player}. ${obsessed.artist} has peers.`,
+      `More ${obsessed.artist} from ${obsessed.player} than anything else.`,
       `${obsessed.player} found ${obsessed.artist} and stopped looking.`,
     ];
   },
@@ -328,9 +343,9 @@ const QUIPS: Quip[] = [
     sharedArtist
       ? [
           `${sharedArtist.who[0]} and ${sharedArtist.who[1]} both brought ${sharedArtist.name}. Twins.`,
-          `${sharedArtist.name} is in two playlists. Coordinated, or sincere.`,
-          `${sharedArtist.who[0]} and ${sharedArtist.who[1]} share a taste in ${sharedArtist.name}. Awkward.`,
-          `Two people chose ${sharedArtist.name} independently. Depressing.`,
+          `${sharedArtist.name} turned up in two different playlists.`,
+          `Two of you brought ${sharedArtist.name}. You know who you are.`,
+          `${sharedArtist.who[0]} and ${sharedArtist.who[1]} never compared notes on ${sharedArtist.name}.`,
         ]
       : null,
 
@@ -348,9 +363,9 @@ const QUIPS: Quip[] = [
     albumDump
       ? [
           `${albumDump.name} brought ${albumDump.count} songs off one album. Lazy.`,
-          `${albumDump.name} copy-pasted an entire tracklist. Effort: none.`,
+          `${albumDump.name} copy-pasted an entire album. Respect.`,
           `${albumDump.count} tracks, one album, one contributor: ${albumDump.name}.`,
-          `${albumDump.name} didn't curate, ${albumDump.name} forwarded.`,
+          `${albumDump.name} found one album they liked and stopped there.`,
         ]
       : null,
 
@@ -380,7 +395,7 @@ const QUIPS: Quip[] = [
     if (!explicitPlayer) return null;
     if (explicitPlayer.share >= 60) {
       return [
-        `${explicitPlayer.share}% of ${possessive(explicitPlayer.name)} list is explicit. Charming.`,
+        `${explicitPlayer.share}% of ${possessive(explicitPlayer.name)} list is explicit.`,
         `${explicitPlayer.name} cannot go one song without swearing.`,
         `Advisory coverage for ${explicitPlayer.name}: ${explicitPlayer.share}%. Medically impressive.`,
         `${possessive(explicitPlayer.name)} playlist should not be played near a school.`,
@@ -389,7 +404,7 @@ const QUIPS: Quip[] = [
     return [
       `${explicitPlayer.share}% of ${possessive(explicitPlayer.name)} list is explicit. Noted.`,
       `${explicitPlayer.name} swears more than everyone else here.`,
-      `${explicitPlayer.name} leads the room in profanity. Somebody had to.`,
+      `Nobody in this room swears more than ${explicitPlayer.name}.`,
       `${possessive(explicitPlayer.name)} playlist has opinions and vocabulary.`,
     ];
   },
@@ -399,8 +414,8 @@ const QUIPS: Quip[] = [
       ? [
           `All Hebrew from ${hebrewOnly}. Akh Sheli.`,
           `${hebrewOnly} has never once left the country.`,
-          `${possessive(hebrewOnly)} playlist does not acknowledge other languages.`,
-          `Foreign-language content in ${possessive(hebrewOnly)} list: none detected.`,
+          `Eliezer Ben Yehuda would be proud of ${possessive(hebrewOnly)} playlist.`,
+          `${hebrewOnly} listens to Minecraft enchantment table?`,
         ]
       : null,
 
@@ -442,7 +457,7 @@ const QUIPS: Quip[] = [
       ? [
           `${epic.name} pooled a ${epic.length} song. Who hurt you.`,
           `Longest track in here is ${epic.length}. Thanks, ${epic.name}.`,
-          `${epic.name} brought something ${epic.length} long. That's a commute.`,
+          `Nobody has ${epic.length} to spare, ${epic.name}.`,
           `${epic.name} thinks length is a substitute for a chorus.`,
         ]
       : null,
@@ -461,7 +476,7 @@ const QUIPS: Quip[] = [
     impatient
       ? [
           `${possessive(impatient.name)} songs average ${impatient.length}. Attention span.`,
-          `Mean track length for ${impatient.name}: ${impatient.length}. Brutal.`,
+          `Nothing ${impatient.name} brought goes much past ${impatient.length}.`,
           `${impatient.name} cannot sit through a bridge.`,
           `Everything ${impatient.name} brought is over in ${impatient.length}.`,
         ]
@@ -474,7 +489,7 @@ const QUIPS: Quip[] = [
       ? [
           `${possessive(eraSpread.name)} taste spans ${eraSpread.range}. Damn.`,
           `${eraSpread.name} brought ${eraSpread.range}. No decade is safe.`,
-          `Release years in ${possessive(eraSpread.name)} list: ${eraSpread.range}. Unfocused.`,
+          `${eraSpread.name} brought ${eraSpread.range} and everything between.`,
           `${eraSpread.name} has no era, only impulses.`,
         ]
       : null,
@@ -493,7 +508,7 @@ const QUIPS: Quip[] = [
       return [
         `${decade.share}% of this pool is ${decade.label}. Predictable.`,
         `The ${decade.label} are doing a lot of work in here.`,
-        `${decade.label} account for ${decade.share}% of the pool. Unadventurous.`,
+        `${decade.share}% of what you lot brought is ${decade.label}.`,
         blame2
           ? `Too much ${decade.label} in here. Classic ${blame2}.`
           : `Somebody in here is very attached to the ${decade.label}.`,
@@ -517,7 +532,7 @@ const QUIPS: Quip[] = [
       ? [
           `Something in here is from ${oldest}. Museum piece.`,
           `Oldest track in the pool: ${oldest}. Somebody's dad is playing.`,
-          `There is a ${oldest} song in here. On purpose.`,
+          `Somebody put a song from ${oldest} in here on purpose.`,
           `This pool reaches back to ${oldest}. Nobody asked it to.`,
         ]
       : null,
@@ -529,16 +544,18 @@ const QUIPS: Quip[] = [
     if (obscureShare >= 50) {
       return [
         blame ? `Half this pool is unheard of. Classic ${blame}.` : `Half this pool is genuinely unheard of.`,
-        `${obscureShare}% of these tracks nobody has ever streamed. Nobody.`,
+        `${obscureShare}% of these tracks have never been streamed by anyone.`,
         `This room is allergic to a chorus.`,
         `Obscurity share: ${obscureShare}%. Somebody is trying very hard.`,
       ];
     }
     return [
       blame ? `A lot of this pool is unheard of. Classic ${blame}.` : `A lot of this pool is genuinely unheard of.`,
-      `${obscureShare}% of this pool is deeply unpopular. That's a choice.`,
+      `${obscureShare}% of this pool is deeply unpopular.`,
       `A quarter of these tracks are strangers to the charts.`,
-      blame ? `Somebody brought the obscure stuff. Probably ${blame}.` : `Somebody here is showing off.`,
+      blame
+        ? `Somebody brought the obscure stuff. Probably ${blame}.`
+        : `Somebody brought the deep cuts to a party game.`,
     ];
   },
 
@@ -548,7 +565,7 @@ const QUIPS: Quip[] = [
       return [
         `This pool is basically a Top 50 playlist.`,
         blame2 ? `Chart music, wall to wall. Thanks, ${blame2}.` : `Chart music, wall to wall. Cowards.`,
-        `${hitShare}% of this pool is a certified hit. No risk taken.`,
+        `${hitShare}% of this pool is a certified hit.`,
         `Nothing in here has ever surprised anyone.`,
       ];
     }
@@ -556,7 +573,7 @@ const QUIPS: Quip[] = [
       blame2 ? `Heavy chart energy in here. Thanks, ${blame2}.` : `Heavy chart energy in here.`,
       `${hitShare}% of this pool charted. Comfortable.`,
       `A third of this room came straight off the radio.`,
-      `Popular, but not embarrassingly so. Yet.`,
+      `Popular, but not yet embarrassing.`,
     ];
   },
 
@@ -573,9 +590,9 @@ const QUIPS: Quip[] = [
     if (meanPopularity >= 65) {
       return [
         `Mostly hits. Safe.`,
-        `Average popularity across the pool: ${meanPopularity}. Unadventurous.`,
+        `Average popularity across the pool: ${meanPopularity}.`,
         `This room likes what it was told to like.`,
-        `Solidly mainstream. Solidly boring.`,
+        `Nothing in this pool is even slightly obscure.`,
       ];
     }
     return null;
@@ -586,7 +603,7 @@ const QUIPS: Quip[] = [
     return [
       blame ? `Most of this pool is deep cuts. ${blame} is proud of that.` : `Most of this pool is deep cuts. Bold strategy.`,
       `Mean popularity: ${meanPopularity}. This is going to be painful.`,
-      `Almost nothing in here is famous. Good luck.`,
+      `Almost nothing in this pool is famous.`,
       blame ? `Somebody made this unwinnable. Probably ${blame}.` : `Somebody made this unwinnable on purpose.`,
     ];
   },
@@ -595,9 +612,9 @@ const QUIPS: Quip[] = [
     ceiling !== null
       ? [
           `Nothing here is even slightly mainstream. Fascinating.`,
-          `Popularity ceiling for the entire pool: under ${ceiling}. Grim.`,
+          `Nothing in this pool scores above ${ceiling}.`,
           `Not one song in here has ever been a hit.`,
-          `This pool tops out below famous. Everybody suffers equally.`,
+          `This pool tops out well below famous.`,
         ]
       : null,
 
@@ -605,8 +622,8 @@ const QUIPS: Quip[] = [
     popSpread
       ? [
           `${possessive(popSpread.name)} list goes from underground to mainstream. Pick a lane.`,
-          `${popSpread.name} has no filter, only inputs.`,
-          `${possessive(popSpread.name)} taste spans the entire popularity scale. Incoherent.`,
+          `${popSpread.name} brought the famous and the unheard-of, equally.`,
+          `${possessive(popSpread.name)} taste covers the whole popularity scale.`,
           `${popSpread.name} likes both the smash and the nobody. Suspicious.`,
         ]
       : null,
@@ -687,7 +704,7 @@ const THEME_LINES: Record<Theme, { min: number; share: number; lines: (n: number
       `${n} songs about love. Cringe.`,
       `${s}% of this pool is about love. Get a hobby.`,
       `${n} love songs. Somebody in here is not over it.`,
-      `Titles containing "love": ${n}. Emotionally unoriginal.`,
+      `${n} songs say the word love. Not one of you means it.`,
     ],
   },
   remix: {
@@ -706,7 +723,7 @@ const THEME_LINES: Record<Theme, { min: number; share: number; lines: (n: number
     lines: (n) => [
       'Somebody keeps putting Christmas songs.',
       `${n} Christmas songs. In this economy.`,
-      `Christmas tracks detected: ${n}. Season: wrong.`,
+      `Check the date. There are ${n} Christmas songs in here.`,
       `${n} songs about Christmas. Somebody peaked in December.`,
     ],
   },
@@ -716,8 +733,8 @@ const THEME_LINES: Record<Theme, { min: number; share: number; lines: (n: number
     lines: (n, s) => [
       `${n} songs about money.`,
       `${s}% of this pool is about being rich. None of you are.`,
-      `${n} tracks about money. Aspirational, at best.`,
-      `Somebody here confuses a playlist with a business plan.`,
+      `${n} songs about money in a room with no money.`,
+      `${n} songs about getting paid. It hasn't worked.`,
     ],
   },
   death: {
@@ -746,7 +763,7 @@ const THEME_LINES: Record<Theme, { min: number; share: number; lines: (n: number
     lines: (n) => [
       'Somebody keeps writing songs about California.',
       `${n} songs about California. None of you have been.`,
-      `California references: ${n}. Geographic obsession noted.`,
+      `${n} California songs. Book a flight or stop.`,
       `${n} tracks about a state nobody in this room lives in.`,
     ],
   },
@@ -756,8 +773,8 @@ const THEME_LINES: Record<Theme, { min: number; share: number; lines: (n: number
     lines: (n, s) => [
       `${n} songs about the night. Nobody here sleeps.`,
       `${s}% of this pool happens after midnight.`,
-      `${n} nocturnal tracks. This is a diagnosis, not a playlist.`,
-      `Everything in here takes place at 3am. Concerning.`,
+      `${n} songs set after midnight. Go to bed.`,
+      `${n} songs about 3am. Somebody has a routine.`,
     ],
   },
   summer: {
@@ -767,7 +784,7 @@ const THEME_LINES: Record<Theme, { min: number; share: number; lines: (n: number
       `${n} songs about summer. It's a personality now.`,
       `${s}% of this pool is sunshine. Insufferable.`,
       `${n} tracks about the beach. Nobody here owns a boat.`,
-      `Somebody is aggressively pretending it's July.`,
+      `${n} summer songs. Look outside.`,
     ],
   },
   rain: {
@@ -776,8 +793,8 @@ const THEME_LINES: Record<Theme, { min: number; share: number; lines: (n: number
     lines: (n) => [
       `${n} songs about rain. Dramatic.`,
       `${n} tracks about weather. Somebody stares out of windows.`,
-      `Rain references: ${n}. Very cinematic, very tiring.`,
-      `Somebody here scores their own life.`,
+      `${n} rain songs. Somebody scores their own bus rides.`,
+      `${n} songs about weather. Pick a different subject.`,
     ],
   },
   fire: {
@@ -796,7 +813,7 @@ const THEME_LINES: Record<Theme, { min: number; share: number; lines: (n: number
     lines: (n) => [
       `${n} songs telling you to dance. Nobody will.`,
       `${n} tracks about dancing, zero dancers in this room.`,
-      `Instructional dance content: ${n} tracks. Ignored.`,
+      `${n} songs about dancing. Everyone is sitting down.`,
       `Music for a party nobody here got invited to.`,
     ],
   },
@@ -806,7 +823,7 @@ const THEME_LINES: Record<Theme, { min: number; share: number; lines: (n: number
     lines: (n, s) => [
       `${n} songs about crying. Somebody is not okay.`,
       `${s}% of this pool is tears. This is a support group.`,
-      `${n} tracks about being sad. Noted, and slightly worrying.`,
+      `${n} songs about crying. Who brought those, and why.`,
       `Emotional stability of this room: ${n} crying songs.`,
     ],
   },
@@ -817,7 +834,7 @@ const THEME_LINES: Record<Theme, { min: number; share: number; lines: (n: number
       `${n} songs about heartbreak. Somebody hasn't moved on.`,
       `${s}% of this pool is a breakup. Same breakup, probably.`,
       `${n} tracks about being hurt. Group therapy, but with drums.`,
-      `Somebody here still checks an old profile.`,
+      `${n} breakup songs. Somebody still checks an old profile.`,
     ],
   },
   baby: {
@@ -826,7 +843,7 @@ const THEME_LINES: Record<Theme, { min: number; share: number; lines: (n: number
     lines: (n, s) => [
       `${n} titles say "baby". Vocabulary of a toddler.`,
       `${s}% of this pool calls somebody "baby". Grim.`,
-      `Lyricists in this pool who own a thesaurus: none.`,
+      `${n} songs, and the best word any of them found was "baby".`,
       `${n} tracks, one word, zero imagination.`,
     ],
   },
@@ -835,9 +852,9 @@ const THEME_LINES: Record<Theme, { min: number; share: number; lines: (n: number
     share: 2,
     lines: (n) => [
       `${n} songs about God. Bold choice for this crowd.`,
-      `Religious content detected: ${n} tracks. Unexpected.`,
+      `${n} songs mention God. Somebody is hedging.`,
       `${n} tracks mention heaven. None of you are going.`,
-      `Somebody in here is praying about something.`,
+      `${n} religious songs, and then this crowd. Interesting.`,
     ],
   },
   drugs: {
@@ -865,9 +882,9 @@ const THEME_LINES: Record<Theme, { min: number; share: number; lines: (n: number
     share: 2,
     lines: (n) => [
       `${n} songs about fighting. Aggressive for a Tuesday.`,
-      `Violent imagery: ${n} tracks. Somebody is coping.`,
+      `${n} songs about fighting. Who is everyone so angry at?`,
       `${n} tracks about war. This is a music game.`,
-      `Somebody here is fighting something. Loudly.`,
+      `${n} violent songs. Everyone here seems nice, though.`,
     ],
   },
   dreams: {
@@ -875,9 +892,9 @@ const THEME_LINES: Record<Theme, { min: number; share: number; lines: (n: number
     share: 3,
     lines: (n, s) => [
       `${n} songs about dreaming. Nobody here is awake.`,
-      `${s}% of this pool is about sleep. Relatable, boring.`,
+      `${s}% of this pool is about sleep.`,
       `${n} tracks about dreams. Say less. Genuinely.`,
-      `Somebody here narrates their own naps.`,
+      `${n} songs about dreams. Nobody wants to hear about it.`,
     ],
   },
   alone: {
@@ -886,7 +903,7 @@ const THEME_LINES: Record<Theme, { min: number; share: number; lines: (n: number
     lines: (n, s) => [
       `${n} songs about being alone. In a room full of people.`,
       `${s}% of this pool is loneliness. Awkward.`,
-      `${n} tracks about nobody. Somebody should say something.`,
+      `${n} songs about being alone. Everyone look at each other.`,
       `Isolation index for this room: ${n} tracks. High.`,
     ],
   },
@@ -895,9 +912,9 @@ const THEME_LINES: Record<Theme, { min: number; share: number; lines: (n: number
     share: 4,
     lines: (n, s) => [
       `${n} songs about somebody's body. Charming.`,
-      `${s}% of this pool is anatomy. Restraint: absent.`,
+      `${s}% of this pool is anatomy.`,
       `${n} tracks about lips, skin and eyes. Get a room.`,
-      `Somebody here has a very physical playlist.`,
+      `${n} songs about bodies. Whose, exactly?`,
     ],
   },
   colours: {
@@ -907,7 +924,7 @@ const THEME_LINES: Record<Theme, { min: number; share: number; lines: (n: number
       `${n} titles are just a colour. Effort: minimal.`,
       `${s}% of this pool names a colour. Poetic, allegedly.`,
       `${n} tracks named after paint.`,
-      `Somebody thinks a colour counts as a theme.`,
+      `Try a noun: ${n} of these titles are just a colour.`,
     ],
   },
   places: {
@@ -927,7 +944,7 @@ const THEME_LINES: Record<Theme, { min: number; share: number; lines: (n: number
       `${n} titles swear at you before the song starts.`,
       `${s}% of these titles are unprintable.`,
       `${n} tracks that can't be read aloud at work.`,
-      `Somebody here has a very direct filing system.`,
+      `${n} titles with a swear in them. Classy.`,
     ],
   },
   sorry: {
@@ -947,7 +964,7 @@ const THEME_LINES: Record<Theme, { min: number; share: number; lines: (n: number
       `${n} songs about leaving. Somebody has a plan.`,
       `${s}% of this pool is about getting out.`,
       `${n} tracks about running away. Nobody has moved.`,
-      `Somebody in here is packing, mentally.`,
+      `${n} songs about leaving. The door is right there.`,
     ],
   },
   girls: {
@@ -965,9 +982,9 @@ const THEME_LINES: Record<Theme, { min: number; share: number; lines: (n: number
     share: 3,
     lines: (n) => [
       `${n} titles are questions. Nobody is answering.`,
-      `${n} tracks ask you something. Rude.`,
-      `Interrogative titles: ${n}. Insecure.`,
-      `${n} songs that end in a question mark. Commit to something.`,
+      `${n} tracks ask you something and none of them wait.`,
+      `${n} titles end in a question mark. Commit to something.`,
+      `${n} songs asking questions nobody wanted asked.`,
     ],
   },
   numbers: {
@@ -975,9 +992,9 @@ const THEME_LINES: Record<Theme, { min: number; share: number; lines: (n: number
     share: 5,
     lines: (n) => [
       `${n} titles contain a number. Fascinating.`,
-      `Numerals in titles: ${n}. Strangely high.`,
+      `${n} titles have a number in them.`,
       `${n} tracks that couldn't think of a word.`,
-      `Somebody here likes a title with maths in it.`,
+      `${n} titles couldn't manage without a digit.`,
     ],
   },
   collabs: {
@@ -1007,7 +1024,7 @@ const THEME_LINES: Record<Theme, { min: number; share: number; lines: (n: number
       `${n} titles are in all caps. Calm down.`,
       `${n} tracks are shouting before they start.`,
       `Caps lock incidents: ${n}.`,
-      `Somebody here confuses volume with meaning.`,
+      `${n} titles in all caps. We can read, thanks.`,
     ],
   },
   oneWord: {
@@ -1016,8 +1033,8 @@ const THEME_LINES: Record<Theme, { min: number; share: number; lines: (n: number
     lines: (n, s) => [
       `${n} titles are a single word. Effort: none.`,
       `${s}% of this pool couldn't manage a second word.`,
-      `${n} one-word titles. Minimalism, or laziness.`,
-      `Somebody here likes their songs pre-abbreviated.`,
+      `Is ${n} one-word titles minimalism or laziness?`,
+      `${n} one-word titles. Somebody ran out of ideas early.`,
     ],
   },
 };
@@ -1050,15 +1067,15 @@ type Vibe = keyof typeof VIBE_LINES;
 const VIBE_LINES = {
   journal: [
     (n: string) => `${n} brought the album of a girl who cries in the car.`,
-    (n: string) => `${n} has a Notes app full of paragraphs nobody received.`,
-    (n: string) => `Somewhere, ${n} is journaling about this exact round.`,
-    (n: string) => `${n} has a folder of screenshots and a lot of feelings.`,
+    (n: string) => `${n} brought an album for writing paragraphs nobody reads.`,
+    (n: string) => `${n} brought the album they cried to. Recently.`,
+    (n: string) => `${possessive(n)} taste is a diary with a chorus.`,
   ],
   deep: [
     (n: string) => `${n} thinks they're deep. ${n} is not deep.`,
     (n: string) => `${n} has explained an album to somebody against their will.`,
     (n: string) => `${n} calls it "a body of work" out loud, in public.`,
-    (n: string) => `${n} would like you to know they understood the concept.`,
+    (n: string) => `${n} brought an album with a concept. They'll tell you.`,
   ],
   vinyl: [
     (n: string) => `${n} owns a record player they have never once used.`,
@@ -1068,21 +1085,21 @@ const VIBE_LINES = {
   ],
   dorm: [
     (n: string) => `${possessive(n)} taste peaked in a dorm room and stayed there.`,
-    (n: string) => `${n} still owns the hoodie.`,
+    (n: string) => `${n} still owns the band hoodie.`,
     (n: string) => `${n} found this album at fifteen and stopped looking.`,
-    (n: string) => `${n} was extremely misunderstood in tenth grade.`,
+    (n: string) => `${n} brought the album that got them through tenth grade.`,
   ],
   threeam: [
     (n: string) => `We all know what ${n} was going through that year.`,
     (n: string) => `${n} listens to this alone at 3am. On purpose.`,
     (n: string) => `${n} brought an album for staring at a ceiling.`,
-    (n: string) => `Somebody should check on ${n}.`,
+    (n: string) => `${possessive(n)} songs are a quiet cry for help.`,
   ],
   villain: [
     (n: string) => `${n} thinks they're the villain. ${n} is not the villain.`,
     (n: string) => `${n} brought music for texting people who moved on.`,
     (n: string) => `${n} drives twelve minutes and calls it a night drive.`,
-    (n: string) => `${n} has never once been that guy.`,
+    (n: string) => `${n} brought villain music. ${n} is not a villain.`,
   ],
   basic: [
     (n: string) => `${n} brought the safest album ever pressed.`,
@@ -1091,7 +1108,7 @@ const VIBE_LINES = {
     (n: string) => `Nothing ${n} brought has ever offended anyone. Tragic.`,
   ],
   angst: [
-    (n: string) => `${n} is still angry about something from 2004.`,
+    (n: string) => `${n} brought music from when they were angry. They still are.`,
     (n: string) => `${n} brought an album for slamming doors to.`,
     (n: string) => `${n} peaked emotionally at fifteen and filed it under taste.`,
     (n: string) => `${n} would like everyone to know they're not okay.`,
@@ -1216,7 +1233,7 @@ const MISSING_LINES: Record<string, string[]> = {
     'No Justin Timberlake anywhere. Cowards.',
     'Justin Timberlake: 0 tracks. Statistically suspicious.',
     'Zero Justin Timberlake. Somebody showed restraint.',
-    "Not one Justin Timberlake song. He'd be devastated.",
+    'Not one Justin Timberlake song in the entire pool.',
   ],
 };
 
