@@ -119,15 +119,9 @@ const TAUNTS = [
   (name: string) => `${name} is warming up a wrong answer.`,
   (name: string) => `${possessive(name)} music taste peaked at fourteen.`,
   (name: string) => `No way ${name} actually listens to their playlist.`,
-  (name: string) => `Somebody explain the rules to ${name}. Again.`,
   (name: string) => `Do not let ${name} near the volume.`,
-  (name: string) => `${possessive(name)} playlist is a cry for help with a beat.`,
-  (name: string) => `${name} put a song in here specifically to look interesting.`,
-  (name: string) => `${possessive(name)} playlist has songs they've never heard.`,
-  (name: string) => `Nobody is going to admit they liked ${possessive(name)} songs.`,
-  (name: string) => `${name} has a Wrapped they have never shown anyone.`,
-  (name: string) => `${name} made half this playlist for somebody who isn't here.`,
-  (name: string) => `${name} added a song at 2am and forgot about it.`,
+  (name: string) => `${possessive(name)} playlist is a cry for help.`,
+  (name: string) => `Even ${name} doesn't know the songs they chose.`,
 ];
 
 type Facts = ReturnType<typeof gather>;
@@ -181,7 +175,7 @@ const QUIPS: Quip[] = [
     if (count <= 20) {
       return [
         `${count} songs, ${name}? Pathetic.`,
-        `${count} songs, ${name}. Not a playlist, a shrug.`,
+        `${name} with only ${count} songs.`,
         `Who told ${name} that ${count} songs was enough?`,
         `${count} songs from ${name}. We've seen ringtone libraries with more.`,
         `${name} showed up with ${count} songs and no shame.`,
@@ -211,15 +205,12 @@ const QUIPS: Quip[] = [
         `${name} brought ${count} songs. Nobody asked, nobody wanted.`,
         `Nobody asked ${name} for ${count} songs.`,
         `${count} songs from ${name}. A personality, not a playlist.`,
-        `${name} brought ${count} songs to a party game.`,
-        `Volume from ${name}: ${count}. Quality: unverified.`,
+        `${name} brought ${count} songs.`,
       ];
     }
     return [
-      `${name} brought the most. Predictably.`,
+      `${name} brought the most songs.`,
       `Largest playlist: ${possessive(name)}, at ${count}.`,
-      `${name} brought ${count} songs. Enthusiasm noted, taste pending.`,
-      `${name} came prepared and nobody else did.`,
     ];
   },
 
@@ -284,14 +275,14 @@ const QUIPS: Quip[] = [
     if (dupes < 1) return null;
     if (dupeShare >= 10) {
       return [
-        `${dupeShare}% of this pool got brought twice. Staggering originality.`,
+        `${dupeShare}% of this pool got brought twice.`,
         `${dupes} songs are in here more than once.`,
         `Playlist overlap: ${dupeShare}%. Nobody here has a personality.`,
         `${dupes} duplicates. You all listen to the same eleven songs.`,
       ];
     }
     return [
-      `${dupes} songs got brought twice. Staggering originality.`,
+      `${dupes} songs got brought twice.`,
       `Somebody copied somebody. ${dupes} songs are in here twice.`,
       `${dupes} songs showed up twice. Two people, one taste.`,
       `${dupes} overlaps. Unremarkable, and still embarrassing.`,
@@ -313,8 +304,8 @@ const QUIPS: Quip[] = [
     if (topArtist.share >= 3) {
       return [
         `Most-brought artist: ${topArtist.name}, at ${topArtist.share}%.`,
-        `${topArtist.name} leads the pool. Nobody should be proud.`,
-        `${topArtist.share}% ${topArtist.name}. Slightly too much ${topArtist.name}.`,
+        `${topArtist.name} leads the pool.`,
+        `${topArtist.share}% ${topArtist.name}. I can appreciate that.`,
         `More ${topArtist.name} in here than anybody else.`,
       ];
     }
@@ -325,7 +316,7 @@ const QUIPS: Quip[] = [
     if (!obsessed) return null;
     if (obsessed.share >= 15) {
       return [
-        `${obsessed.share}% of ${possessive(obsessed.player)} list is ${obsessed.artist}. Get a therapist.`,
+        `${obsessed.share}% of ${possessive(obsessed.player)} list is ${obsessed.artist}. Get a therapist ♥`,
         `${obsessed.player} has one artist and it's ${obsessed.artist}.`,
         `Does ${obsessed.player} listen to anyone except ${obsessed.artist}?`,
         `Somebody tell ${obsessed.player} that other artists exist.`,
@@ -444,7 +435,7 @@ const QUIPS: Quip[] = [
         `${explicitShare}% of this pool has a parental advisory.`,
         `A third of this room swears at you.`,
         `Explicit share: ${explicitShare}%. About what you'd expect here.`,
-        `Enough swearing to notice, not enough to be interesting.`,
+        `So many explicit songs here. I hope your dad comes back ♥`,
       ];
     }
     return null;
@@ -458,7 +449,7 @@ const QUIPS: Quip[] = [
           `${epic.name} pooled a ${epic.length} song. Who hurt you.`,
           `Longest track in here is ${epic.length}. Thanks, ${epic.name}.`,
           `Nobody has ${epic.length} to spare, ${epic.name}.`,
-          `${epic.name} thinks length is a substitute for a chorus.`,
+          `This one ${epic.length} song by ${epic.name} will kill me.`,
         ]
       : null,
 
@@ -532,8 +523,8 @@ const QUIPS: Quip[] = [
       ? [
           `Something in here is from ${oldest}. Museum piece.`,
           `Oldest track in the pool: ${oldest}. Somebody's dad is playing.`,
-          `Somebody put a song from ${oldest} in here on purpose.`,
-          `This pool reaches back to ${oldest}. Nobody asked it to.`,
+          `Somebody put a song from ${oldest}.`,
+          `This pool reaches back to ${oldest}.`,
         ]
       : null,
 
@@ -545,7 +536,7 @@ const QUIPS: Quip[] = [
       return [
         blame ? `Half this pool is unheard of. Classic ${blame}.` : `Half this pool is genuinely unheard of.`,
         `${obscureShare}% of these tracks have never been streamed by anyone.`,
-        `This room is allergic to a chorus.`,
+        `This room is allergic to a popular songs.`,
         `Obscurity share: ${obscureShare}%. Somebody is trying very hard.`,
       ];
     }
@@ -561,7 +552,7 @@ const QUIPS: Quip[] = [
 
   ({ hitShare, blame2 }) => {
     if (hitShare === null || hitShare < 30) return null;
-    if (hitShare >= 55) {
+    if (hitShare >= 65) {
       return [
         `This pool is basically a Top 50 playlist.`,
         blame2 ? `Chart music, wall to wall. Thanks, ${blame2}.` : `Chart music, wall to wall. Cowards.`,
@@ -1212,28 +1203,24 @@ const MISSING_ARTISTS: Record<string, string[]> = {
 
 const MISSING_LINES: Record<string, string[]> = {
   omerAdam: [
-    'Not one Omer Adam. This room has no soul.',
-    'Omer Adam: 0 tracks. Noted.',
-    'Zero Omer Adam songs. Somebody showed restraint.',
-    'No Omer Adam in here. Every wedding DJ just felt a chill.',
+    'Not one Omer Adam song. Homie.',
+    '0 songs by Omer Adam.',
+    'Zero Omer Adam songs.',
   ],
   uziHitman: [
-    'Zero Uzi Hitman. Your grandparents are ashamed.',
-    'Uzi Hitman representation in this pool: none.',
-    'Not one Uzi Hitman song. Cultural failure.',
-    'No Uzi Hitman detected. This room was raised wrong.',
+    'Not one Uzi Hitman song.',
+    '0 songs by Uzi Hitman.',
+    'Zero Uzi Hitman songs.',
   ],
   simonGarfunkel: [
-    'Simon & Garfunkel: not detected. Sad.',
-    'No Simon & Garfunkel. Nobody here has ever been quiet.',
-    'Zero Simon & Garfunkel. Thank god.',
-    'Not one Simon & Garfunkel song. Cowards, all of you.',
+    'Not one Simon & Garfunkel song.',
+    '0 songs by Simon & Garfunkel.',
+    'Zero Simon & Garfunkel songs.',
   ],
   timberlake: [
-    'No Justin Timberlake anywhere. Cowards.',
-    'Justin Timberlake: 0 tracks. Statistically suspicious.',
-    'Zero Justin Timberlake. Somebody showed restraint.',
-    'Not one Justin Timberlake song in the entire pool.',
+    'Not one Justin Timberlake song. Gotta try Post Malone.',
+    '0 songs by Justin Timberlake.',
+    'Zero Justin Timberlake songs. Someone bring the Sexy Back.',
   ],
 };
 
