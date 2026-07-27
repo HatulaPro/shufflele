@@ -22,9 +22,9 @@ import type { Track } from './types';
  * Every constant is a dial on "how strongly does popularity decide this".
  * Sharper bias means lowering TEMPERATURE, not raising anything else.
  */
-const TEMPERATURE = 8;
+const TEMPERATURE = 10;
 const MAX_DEFICIT = 50;
-const UNIFORM_MIX = 0.07;
+const UNIFORM_MIX = 0.1;
 const REF_QUANTILE = 0.9;
 
 /**
