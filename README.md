@@ -128,13 +128,13 @@ Personal playlists sit far below it.
 ### Picking the secret song
 
 [`src/lib/select.ts`](src/lib/select.ts) draws a playlist uniformly, then a track inside it weighted
-by `exp(-deficit / 10)` — where `deficit` is how far that track's popularity sits below its **own
-playlist's** 90th percentile, clamped to 45 points. One round in ten skips the weighting entirely
-and draws uniformly.
+by `exp(-deficit / 6)` — where `deficit` is how far that track's popularity sits below its **own
+playlist's** 86th percentile, clamped to 50 points. One round in fourteen skips the weighting
+entirely and draws uniformly.
 
 Weighting the gap rather than the raw score is the whole trick. A playlist of wall-to-wall hits
-spans ~75–92, so everything in it is roughly fair game; an alternative playlist spans ~5–65, so its
-deep cuts are ~148x rarer than its singles without anyone tuning a knob per playlist. Nothing becomes
+spans ~75–92, so everything in it stays in play; an alternative playlist spans ~5–65, so its
+deep cuts are ~4200x rarer than its singles without anyone tuning a knob per playlist. Nothing becomes
 unreachable, and no state is written anywhere — within a lobby the used-track list already drains
 the popular head, and the uniform mixture covers the rest.
 

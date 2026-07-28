@@ -22,14 +22,14 @@ import type { Track } from './types';
  * Every constant is a dial on "how strongly does popularity decide this".
  * Sharper bias means lowering TEMPERATURE, not raising anything else.
  */
-const TEMPERATURE = 10;
+const TEMPERATURE = 6;
 const MAX_DEFICIT = 50;
-const UNIFORM_MIX = 0.1;
-const REF_QUANTILE = 0.9;
+const UNIFORM_MIX = 0.07;
+const REF_QUANTILE = 0.86;
 
 /**
  * Uniform in [0, 1). Six bytes is 2^48 buckets — far more resolution than the
- * widest weight ratio here (~90:1) can use, and it divides exactly, so there's
+ * widest weight ratio here (~4200:1) can use, and it divides exactly, so there's
  * no modulo bias to argue about.
  */
 function randomFloat(): number {
@@ -55,13 +55,13 @@ function quantile(sortedAsc: number[], q: number): number {
  * formula behave differently per playlist without any per-playlist tuning:
  *
  * - a playlist of global hits spans maybe 75–92, so the least likely song is
- *   only e^1.7 ≈ 5x behind the top — effectively a fair draw;
+ *   only e^2.5 ≈ 12x behind the top — still a broad draw;
  * - an alternative playlist spans 5–65, so its deep cuts sit 50 points down
  *   and get crushed by orders of magnitude.
  *
- * The reference point is the 90th percentile rather than the max, so the whole
- * top decile ties for maximum weight. A 200-song playlist therefore has a head
- * of ~20 songs, not one mega-hit that flattens everything under it — and a
+ * The reference point is the 86th percentile rather than the max, so the whole
+ * top seventh ties for maximum weight. A 200-song playlist therefore has a head
+ * of ~28 songs, not one mega-hit that flattens everything under it — and a
  * single outlier smash in an otherwise niche playlist stays harmless.
  */
 function weightsFor(playlist: Track[]): number[] {
@@ -82,8 +82,9 @@ function weightsFor(playlist: Track[]): number[] {
 
   return playlist.map((track) => {
     const p = typeof track.popularity === 'number' ? track.popularity : fallback;
-    // Clamped so nothing is more than e^5 ≈ 148x behind the head. Without the
-    // cap the bottom of a wide playlist is reachable only in theory.
+    // Clamped so nothing is more than e^8.3 ≈ 4200x behind the head. At this
+    // temperature the clamp no longer does much on its own — what actually
+    // keeps the bottom of a wide playlist reachable is UNIFORM_MIX.
     const deficit = Math.min(Math.max(ref - p, 0), MAX_DEFICIT);
     return Math.exp(-deficit / TEMPERATURE);
   });
@@ -125,9 +126,9 @@ export function pickSecret(eligible: Track[]): Track | null {
 
   const playlist = pickUniform([...byPlaylist.values()]);
 
-  // Roughly one round in ten ignores popularity entirely. This is the answer to
-  // "don't play the same handful of songs out of a 200-song playlist" that
-  // doesn't cost any state: within a lobby the used-track exclusion already
+  // Roughly one round in fourteen ignores popularity entirely. This is the
+  // answer to "don't play the same handful of songs out of a 200-song
+  // playlist" that doesn't cost any state: within a lobby the exclusion already
   // drains the head, and across lobbies this keeps the head from being the
   // only thing anyone ever hears.
   if (randomFloat() < UNIFORM_MIX) return pickUniform(playlist);

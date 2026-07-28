@@ -324,23 +324,22 @@ Selection runs in three stages over the tracks not already used or marked unusab
 1. **A playlist, uniformly at random.** Every player's playlist has the same chance no matter how
    many tracks it contributed — a 30-song playlist matters exactly as much as a 300-song one, and
    picking the playlist first gets that without any size normalisation.
-2. **A track inside it, weighted by `exp(-deficit / 10)`**, where `deficit` is how far the track's
-   `popularity` sits below its *own playlist's* 90th percentile, clamped to `[0, 50]`.
-3. **With probability 0.1, ignore stage 2** and draw uniformly from the playlist instead.
+2. **A track inside it, weighted by `exp(-deficit / 6)`**, where `deficit` is how far the track's
+   `popularity` sits below its *own playlist's* 86th percentile, clamped to `[0, 50]`.
+3. **With probability 0.07, ignore stage 2** and draw uniformly from the playlist instead.
 
 Weighting on the gap rather than the raw 0–100 score is what makes one formula behave differently
 per playlist with no per-playlist tuning. A playlist of global hits spans maybe 75–92, so its
-least-likely song is only ~5x behind its most-likely — effectively a fair draw. An alternative
-playlist spans 5–65, so its deep cuts sit 50 points down and are ~148x rarer (the clamp's floor).
-Simulated over 200k draws at 250 tracks/playlist, picks land in the playlist's top/2nd/3rd/bottom
-popularity quartile roughly 43/29/18/10 for the tight playlist and 70/20/7/3 for the wide one.
+least-likely song is only ~12x behind its most-likely — still a broad draw. An alternative
+playlist spans 5–65, so its deep cuts sit 50 points down and are ~4200x rarer (the clamp's floor),
+which at this temperature means the uniform mixture, not the clamp, is what keeps them reachable.
 
-The reference point is the 90th percentile rather than the max so the whole top decile ties for
-maximum weight: a 200-song playlist gets a head of ~20 songs instead of one mega-hit that flattens
+The reference point is the 86th percentile rather than the max so the whole top seventh ties for
+maximum weight: a 200-song playlist gets a head of ~28 songs instead of one mega-hit that flattens
 everything under it, and one outlier smash in an otherwise niche playlist stays harmless.
 
 Repetition is handled without any new state. Within a lobby the used-track exclusion already drains
-the head; across lobbies the 10% uniform mixture and the deficit clamp keep the head from being the
+the head; across lobbies the 7% uniform mixture and the deficit clamp keep the head from being the
 only thing anyone ever hears (effective pool size stays in the 80–180 range for a 100–400 track
 playlist, not 4). A track whose popularity is null counts as its playlist's median, so a
 track the payload omitted the field for is left unlabelled rather than unpickable; a playlist with
