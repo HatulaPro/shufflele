@@ -2,7 +2,7 @@ import { RATELIMIT_TTL_SECONDS, keys, redis, today } from './redis';
 
 export function gamesPerDay(): number {
   const configured = Number.parseInt(process.env.GAMES_PER_DAY ?? '', 10);
-  return Number.isFinite(configured) && configured > 0 ? configured : 5;
+  return Number.isFinite(configured) && configured > 0 ? configured : 10;
 }
 
 export type RateLimitResult = { allowed: boolean; used: number; limit: number };
