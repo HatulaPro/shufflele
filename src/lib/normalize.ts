@@ -26,6 +26,20 @@ export function coreTitle(title: string): string {
   return normalized || normalize(title);
 }
 
+/**
+ * `coreTitle`'s decoration-stripping without the normalisation, for the lookups
+ * that hand a title to someone else's search box: "Song (feat. X) - 2011
+ * Remaster" becomes "Song". Falls back to the original rather than returning
+ * empty, for a title that is *only* a parenthetical.
+ */
+export function plainTitle(title: string): string {
+  const stripped = title
+    .replace(/\s*[([][^)\]]*[)\]]\s*/g, ' ')
+    .replace(/\s+-\s+.*$/, '')
+    .trim();
+  return stripped || title;
+}
+
 /** Sørensen–Dice over character bigrams. Cheap and forgiving of word order. */
 export function similarity(a: string, b: string): number {
   if (a === b) return 1;

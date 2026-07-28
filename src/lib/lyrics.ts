@@ -1,4 +1,4 @@
-import { coreTitle, normalize } from './normalize';
+import { coreTitle, normalize, plainTitle } from './normalize';
 import type { Track } from './types';
 
 /**
@@ -41,15 +41,6 @@ function givesAway(line: string, banned: string[]): boolean {
   return words.some((word) =>
     banned.some((b) => word === b || (b.length >= 3 && word.startsWith(b))),
   );
-}
-
-/** "(feat. X)" / " - 2011 Remaster" decorations, kept out of the lookup path. */
-function plainTitle(title: string): string {
-  const stripped = title
-    .replace(/\s*[([][^)\]]*[)\]]\s*/g, ' ')
-    .replace(/\s+-\s+.*$/, '')
-    .trim();
-  return stripped || title;
 }
 
 async function fetchLyrics(artist: string, title: string): Promise<string | null> {

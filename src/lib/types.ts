@@ -106,6 +106,11 @@ export type Round = {
   /** Both null when the secret track has no popularity. See lib/par.ts. */
   par: number | null;
   difficulty: string | null;
+  /**
+   * YouTube views on the secret track, resolved once at pick time. Null when
+   * there's no API key, no match, or the lookup failed. See lib/youtube.ts.
+   */
+  playCount?: number | null;
   previewUrl: string;
   predictionId: string | null;
   /** Unguessable component of the webhook callback URL. */
@@ -150,6 +155,8 @@ export type PublicRound = {
   /** Clamped to the round's actual ladder length. Null hides the header. */
   par: number | null;
   difficulty: string | null;
+  /** YouTube views on the secret track. Null hides the chip. See lib/youtube.ts. */
+  playCount: number | null;
   currentRow: number;
   totalRows: number;
   rows: PublicRow[];

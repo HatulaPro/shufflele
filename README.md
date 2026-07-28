@@ -23,6 +23,7 @@ Copy `.env.example` to `.env.local` and fill it in:
 | `INTERNAL_API_SECRET` | Any long random string (`openssl rand -hex 32`), same value across one deployment. Gates the Edge route that fetches the Spotify token. Required. |
 | `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET` | [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard). Only useful if your app has **extended quota mode** — see [Reading playlists](#reading-playlists). Leave blank otherwise. |
 | `SPOTIFY_TOKEN_OVERRIDE` | Local development only. See [Reading playlists](#reading-playlists). |
+| `YOUTUBE_API_KEY` | [console.cloud.google.com](https://console.cloud.google.com) — enable **YouTube Data API v3** and create an API key. No OAuth, no billing. Optional: without it the play-count chip just doesn't appear. |
 
 ```bash
 npm run dev
@@ -208,6 +209,17 @@ with `NEXT_PUBLIC_BASE_URL=http://localhost:3000` and no tunnel.
 **The webhook has two independent gates:** the standard-webhooks (svix) signature, and an
 unguessable per-round key carried in the callback URL. A delivery for a round that already moved
 on is ignored, and anything unrecognised returns 200 so Replicate doesn't retry forever.
+
+**Play counts come from YouTube, because Spotify has no stream count.** The header shows the song's
+plays next to its par — the two things the round knows about the track — and no Spotify API tier
+exposes streams, so [`src/lib/youtube.ts`](src/lib/youtube.ts) searches YouTube and takes the views
+on the largest upload that matches on title similarity *and* has the artist in the video title or
+channel name (the latter is what catches `Artist - Topic` uploads). Largest single upload rather
+than a sum: a song's views are split across the official video, the audio upload and a pile of
+lyric videos, and adding them would count the same recording three times. Resolved once at pick
+time, so it can't drift between polls, and rounded hard on display — it's a sense of scale, not a
+chart position. One round costs 101 of the free tier's 10,000 daily quota units, and without
+`YOUTUBE_API_KEY` the chip just never renders.
 
 **Rate limiting counts rounds, not lobbies** — `INCR ratelimit:games:{today}`, checked before any
 GPU time is spent, refunded if the round fails to launch. Default 5/day, `GAMES_PER_DAY` to change.

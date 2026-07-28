@@ -120,6 +120,15 @@ A full ladder is four rows, so par caps there — Hard and Very hard share a par
 label. When the payload omits `popularity` for a track, the round runs with no difficulty header
 rather than an invented one.
 
+**Plays** sit next to par in the same header, as `48M plays` — the other stat the round knows about
+the song, and the one people actually have intuitions about. Spotify exposes no stream count at any
+tier, so the number is YouTube views on the biggest upload that matches the track (title similarity
+plus the artist appearing in the video title or channel name, which is what catches `Artist -
+Topic`). It measures something different from Spotify streams and always will; it's a sense of
+scale, not a chart position, and it's rounded hard for that reason. Resolved once at pick time and
+stored on the round, so it can't drift between polls. Requires `YOUTUBE_API_KEY`; with no key, no
+match, or any error the chip simply doesn't render, exactly as par does without `popularity`.
+
 **There is no clue row.** It only ever restated whose playlist the track came from, which the
 `playlist` guess tier (§1.5) and the reveal already say.
 

@@ -27,6 +27,23 @@ const QUIP_SECONDS = 11;
 /** Shown until the real lines arrive, and if the fetch fails outright. */
 const FALLBACK_QUIP = 'Digging through everyone’s questionable taste…';
 
+/**
+ * "1.4B" / "153M" / "5.4M" / "312K". Rounded hard on purpose — the exact figure
+ * is noise on a chip, and a precise number invites reading it as a leaderboard.
+ *
+ * The decimal only survives below 10, where it's the difference between 1.4B
+ * and 2.1B. Past that it's both meaningless and expensive: three chips at
+ * "153.1M plays" width wrap to a second line on a 375px phone.
+ */
+function compactPlays(views: number): string {
+  if (views < 1e3) return String(views);
+  // Boundaries sit where the rounding lands, not on the round number: 999.9M
+  // views has to read as "1B", never "1000M".
+  const [value, unit] =
+    views >= 999.5e6 ? [views / 1e9, 'B'] : views >= 999.5e3 ? [views / 1e6, 'M'] : [views / 1e3, 'K'];
+  return `${value < 10 ? value.toFixed(1).replace(/\.0$/, '') : Math.round(value)}${unit}`;
+}
+
 export default function Round({
   code,
   n,
@@ -328,9 +345,14 @@ export default function Round({
       </div>
 
       {/* Header metadata is deliberately non-identifying. SPEC §1.2. */}
-      {(round.releaseYear || round.par) && (
+      {(round.releaseYear || round.par || round.playCount) && (
         <div className="meta-bar">
           {round.releaseYear && <span className="chip">Released {round.releaseYear}</span>}
+          {round.playCount && (
+            <span className="chip" title={`${round.playCount.toLocaleString()} YouTube views`}>
+              {compactPlays(round.playCount)} plays
+            </span>
+          )}
           {round.par && (
             <span className="chip chip--accent">
               {round.difficulty} · par {round.par}

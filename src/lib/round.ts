@@ -148,6 +148,9 @@ export function toPublicRound(round: Round): PublicRound {
     releaseYear: round.secret.releaseYear,
     par,
     difficulty: round.difficulty ?? null,
+    // `typeof` rather than `??` for the same reason as par above: a round in
+    // Redis from before the lookup existed carries no such field.
+    playCount: typeof round.playCount === 'number' ? round.playCount : null,
     currentRow: round.currentRow,
     totalRows: ladder ? ladder.length : 0,
     rows,

@@ -7,6 +7,7 @@ import { consumeGameCredit, refundGameCredit } from '@/lib/ratelimit';
 import { baseUrl, createSeparation } from '@/lib/replicate';
 import { pickSecret } from '@/lib/select';
 import type { Round, Track } from '@/lib/types';
+import { findPlayCount } from '@/lib/youtube';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -110,6 +111,11 @@ export async function POST(_req: NextRequest, ctx: Ctx): Promise<NextResponse> {
 
   const scoring = parFor(chosen.popularity);
 
+  // Resolved here rather than lazily like the lyric hint: this is header
+  // metadata, so it has to be there from the first row, and the round is about
+  // to sit in Demucs for a minute anyway. Capped internally, null on failure.
+  const playCount = await findPlayCount(chosen);
+
   const round: Round = {
     code,
     n,
@@ -118,6 +124,7 @@ export async function POST(_req: NextRequest, ctx: Ctx): Promise<NextResponse> {
     secret: chosen,
     par: scoring?.par ?? null,
     difficulty: scoring?.difficulty ?? null,
+    playCount,
     previewUrl,
     predictionId,
     webhookKey,
