@@ -22,6 +22,8 @@ export type StemPlayer = {
   /** RMS in dBFS per stem, filled in as each one decodes. */
   levels: Partial<Record<PlayableStem, number>>;
   toggle: () => void;
+  /** Halts playback and rewinds to the top. */
+  stop: () => void;
   seek: (seconds: number) => void;
   nudge: (delta: number) => void;
   setVolume: (value: number) => void;
@@ -288,6 +290,13 @@ export function useStemPlayer(sources: StemSource[], active: PlayableStem[]): St
     }
   }, [getCtx, livePosition, startAt, stopNodes]);
 
+  const stop = useCallback(() => {
+    stopNodes();
+    offsetRef.current = 0;
+    setPosition(0);
+    setPlaying(false);
+  }, [stopNodes]);
+
   const seek = useCallback(
     (seconds: number) => {
       const end = durationRef.current || seconds;
@@ -326,6 +335,7 @@ export function useStemPlayer(sources: StemSource[], active: PlayableStem[]): St
     volume,
     levels,
     toggle,
+    stop,
     seek,
     nudge,
     setVolume,

@@ -173,13 +173,17 @@ export default function Round({
         setRound(next);
         setModalOpen(false);
         setError(null);
+        // A wrong guess burns a row and unlocks the next stem, so the mix the
+        // player is holding is stale. Stop it and rewind rather than letting the
+        // old row keep running under the new one.
+        if (payload.trackId && next.state !== 'won') player.stop();
       } catch (err) {
         setError(err instanceof Error ? err.message : 'That guess did not go through.');
       } finally {
         setBusy(false);
       }
     },
-    [code, n],
+    [code, n, player.stop],
   );
 
   /**
@@ -203,6 +207,29 @@ export default function Round({
   );
 
   const askToLeave = () => setLeaving(true);
+
+  /**
+   * The chips that ran above the ladder while guessing. Kept in one place so the
+   * result screen shows the same three stats in the same shape — the numbers the
+   * player was reasoning from shouldn't change costume once the song is revealed.
+   * Header metadata is deliberately non-identifying. SPEC §1.2.
+   */
+  const metaBar = round &&
+    (round.releaseYear || round.par || round.playCount) && (
+      <div className="meta-bar">
+        {round.releaseYear && <span className="chip">Released {round.releaseYear}</span>}
+        {round.playCount && (
+          <span className="chip" title={`${round.playCount.toLocaleString()} YouTube views`}>
+            {compactPlays(round.playCount)} plays
+          </span>
+        )}
+        {round.par && (
+          <span className="chip chip--accent">
+            {round.difficulty} · par {round.par}
+          </span>
+        )}
+      </div>
+    );
 
   // --- loading -----------------------------------------------------------
 
@@ -283,10 +310,13 @@ export default function Round({
           {won && (
             <p className="muted">
               {burned} {burned === 1 ? 'row' : 'rows'} used
-              {round.par ? ` — par ${round.par}` : ''}
             </p>
           )}
         </div>
+
+        {/* Par lives on the chip below rather than beside the row count: printing
+            it twice a line apart reads as a stutter. */}
+        {metaBar}
 
         <div className="card stack">
           <div className="reveal">
@@ -299,7 +329,8 @@ export default function Round({
               <div className="reveal__artist">{round.reveal.artist}</div>
               <p className="tiny" style={{ marginTop: 6 }}>
                 From {round.reveal.contributor}&rsquo;s playlist
-                {round.reveal.releaseYear ? ` · ${round.reveal.releaseYear}` : ''}
+                {/* The year is on the chip row above; repeating it here just
+                    crowds the credit line. */}
               </p>
             </div>
           </div>
@@ -344,22 +375,7 @@ export default function Round({
         </span>
       </div>
 
-      {/* Header metadata is deliberately non-identifying. SPEC §1.2. */}
-      {(round.releaseYear || round.par || round.playCount) && (
-        <div className="meta-bar">
-          {round.releaseYear && <span className="chip">Released {round.releaseYear}</span>}
-          {round.playCount && (
-            <span className="chip" title={`${round.playCount.toLocaleString()} YouTube views`}>
-              {compactPlays(round.playCount)} plays
-            </span>
-          )}
-          {round.par && (
-            <span className="chip chip--accent">
-              {round.difficulty} · par {round.par}
-            </span>
-          )}
-        </div>
-      )}
+      {metaBar}
 
       <Ladder rows={round.rows} />
 
