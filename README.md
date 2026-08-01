@@ -127,10 +127,16 @@ Personal playlists sit far below it.
 
 ### Picking the secret song
 
-[`src/lib/select.ts`](src/lib/select.ts) draws a playlist uniformly, then a track inside it weighted
+[`src/lib/select.ts`](src/lib/select.ts) draws a contributor, then a track of theirs weighted
 by `exp(-deficit / 6)` — where `deficit` is how far that track's popularity sits below its **own
 playlist's** 86th percentile, clamped to 50 points. One round in fourteen skips the weighting
 entirely and draws uniformly.
+
+The outer draw is a bag shuffle: only contributors tied for the fewest rounds so far are in the
+running, so everyone is heard once before anyone is heard twice, and the bag refills itself the
+moment the counts level. Uniform was worse than it looks — simulated over six contributors, it
+left somebody with no rounds at all in 98% of six-round sessions and 72% of ten-round ones.
+Fairness is per person, not per playlist.
 
 Weighting the gap rather than the raw score is the whole trick. A playlist of wall-to-wall hits
 spans ~75–92, so everything in it stays in play; an alternative playlist spans ~5–65, so its
@@ -159,7 +165,7 @@ guest phones need no updates at all after submitting.
 ## How a round works
 
 ```
-start ──► pick a track (uniform random, unused)
+start ──► pick a track (least-served contributor, popularity-weighted, unused)
           └─ iTunes match → preview + album art + release year, retrying up to 8
              tracks (Spotify's own preview is a fallback only — see below)
        ──► create a Demucs prediction (htdemucs, 4-stem) and return immediately
@@ -222,7 +228,7 @@ chart position. One round costs 101 of the free tier's 10,000 daily quota units,
 `YOUTUBE_API_KEY` the chip just never renders.
 
 **Rate limiting counts rounds, not lobbies** — `INCR ratelimit:games:{today}`, checked before any
-GPU time is spent, refunded if the round fails to launch. Default 5/day, `GAMES_PER_DAY` to change.
+GPU time is spent, refunded if the round fails to launch. Default 10/day, `GAMES_PER_DAY` to change.
 
 ## Known limitations
 
@@ -242,9 +248,12 @@ Carried over from the spec, all accepted:
 - A track iTunes can't match falls back to Spotify's preview, which may be as short as ~15s.
 - The result-screen Spotify embed plays a preview, not the full track, for logged-out listeners.
 - Replicate cold starts can make the loading screen run over a minute.
-- 5 rounds/day hard cap.
+- 10 rounds/day hard cap.
+- Guess search matches a title in its own script, not in romanisation — a Hebrew song is found by
+  typing Hebrew, not by typing "omer adam". Unpointed Hebrew doesn't determine its own vowels, so
+  any transliteration good enough to match would have to guess at them.
 
-Deliberately deferred: per-contributor fairness in selection, scoring across a session, leaderboards.
+Deliberately deferred: scoring across a session, leaderboards.
 Deliberately not done: caching separated stems.
 
 ## Licence

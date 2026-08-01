@@ -42,6 +42,25 @@ export async function POST(_req: NextRequest, ctx: Ctx): Promise<NextResponse> {
   // Selection and preview resolution are one loop, because a picked track may
   // have neither a Spotify preview nor an iTunes match. SPEC §3.2.
   const excluded = new Set([...lobby.usedTrackIds, ...lobby.unusableTrackIds]);
+
+  // What each contributor has actually had on air, for the fairness draw. Read
+  // from `usedTrackIds` only: a track that was picked and then thrown out for
+  // having no preview never reached the room, so it must not count as that
+  // player's turn. Resolved once — the loop below doesn't add to it.
+  //
+  // One entry per *round*, not per copy in the pool. Nothing dedupes the pool
+  // on ingest, so a song two people both submitted is two rows sharing an id,
+  // and filtering naively would charge both of them a turn for the one round it
+  // played — sharing a popular song would cost you airtime. The first row wins,
+  // matching the reveal, which credits a single contributor for the track.
+  const played = new Map<string, Track>();
+  for (const track of pool) {
+    if (!played.has(track.spotifyId)) played.set(track.spotifyId, track);
+  }
+  const alreadyPlayed = lobby.usedTrackIds
+    .map((id) => played.get(id))
+    .filter((t): t is Track => t !== undefined);
+
   let chosen: Track | null = null;
   let previewUrl: string | null = null;
 
@@ -49,8 +68,9 @@ export async function POST(_req: NextRequest, ctx: Ctx): Promise<NextResponse> {
     const eligible = pool.filter((t) => !excluded.has(t.spotifyId));
     if (eligible.length === 0) break;
 
-    // Playlist-uniform, then popularity-weighted inside it. See lib/select.ts.
-    const track = pickSecret(eligible);
+    // Least-served contributor, then popularity-weighted inside their tracks.
+    // See lib/select.ts.
+    const track = pickSecret(eligible, alreadyPlayed);
     if (!track) break;
 
     // iTunes is the preview source, and now the only thing it is asked for.
@@ -76,6 +96,15 @@ export async function POST(_req: NextRequest, ctx: Ctx): Promise<NextResponse> {
       previewUrl = preview;
       break;
     }
+
+    // The one place a track silently leaves the game. Worth a line in the logs:
+    // "that playlist never comes up" is indistinguishable from bad luck without
+    // it, and a run of rejections all from one contributor is the tell.
+    console.warn(
+      `[start] ${code}: dropped "${track.title}" from ${track.contributor} — ` +
+        `no iTunes match and no Spotify preview ` +
+        `(attempt ${attempt + 1}/${MAX_PICK_ATTEMPTS})`,
+    );
 
     excluded.add(track.spotifyId);
     lobby.unusableTrackIds.push(track.spotifyId);

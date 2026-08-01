@@ -1,16 +1,72 @@
 /**
+ * Letters that carry a word but survive NFD intact, so the mark-strip never
+ * sees them. Without this they fall through to the non-letter sweep below and
+ * split the word they sit in — "Blåhaj" is one token, not "bl haj".
+ */
+const FOLD: Record<string, string> = {
+  ø: 'o',
+  đ: 'd',
+  ð: 'd',
+  ł: 'l',
+  æ: 'ae',
+  œ: 'oe',
+  ß: 'ss',
+  þ: 'th',
+  ħ: 'h',
+  ı: 'i',
+};
+
+const FOLDABLE = new RegExp(`[${Object.keys(FOLD).join('')}]`, 'g');
+
+/** Combining marks spelled out, because they render as nothing in an editor. */
+const KANA_VOICING = '\u3099\u309A';
+const STRIPPABLE_MARK = new RegExp(`(?![${KANA_VOICING}])\\p{M}`, 'gu');
+
+/**
  * Case- and diacritic-insensitive normalisation. Used for the guess-modal
  * substring search, for artist matching, and for scoring iTunes candidates —
  * they all need "Beyoncé" and "beyonce" to be the same string.
+ *
+ * The letter sweep is `\p{L}\p{N}`, not `a-z0-9`. A Latin-only class doesn't
+ * merely degrade a Hebrew title, it erases it: every character is dropped and
+ * the whole string normalises to empty, which silently took a Hebrew track out
+ * of the guess search *and* out of iTunes matching (a zero-length title scores
+ * 0 similarity against everything, so no candidate ever cleared the threshold).
+ * Same for Cyrillic, Greek, Arabic and CJK.
+ *
+ * Two consequences of writing for a non-Latin script that the Latin path never
+ * had to think about:
+ *
+ * - **Niqqud** (Hebrew vowel points) are combining marks, so the existing
+ *   `\p{M}` strip already folds them away — pointed and unpointed spellings of
+ *   the same word land on the same string, exactly like é and e. Cantillation
+ *   marks go the same way.
+ * - **Geresh and gershayim** (׳ ״), which punctuate Hebrew acronyms and
+ *   loanwords, join the apostrophe list rather than the sweep: they have to
+ *   vanish without leaving a space, or one word becomes two.
+ *
+ * Bidi and joiner controls (U+200E/U+200F and friends) are format characters
+ * that ride along invisibly in metadata copied out of an RTL editor. They are
+ * deleted outright — sweeping them to a space would split a word on a
+ * character nobody can see.
+ *
+ * The one mark held back from the strip is kana voicing (U+3099/U+309A): が is
+ * a different letter from か, not an accented one, so folding them together
+ * would collapse songs that aren't the same. NFC puts it back on its base
+ * character afterwards, since a bare combining mark would only get swept into
+ * a space and split the word.
  */
 export function normalize(input: string): string {
   return input
     .normalize('NFD')
-    .replace(/\p{M}/gu, '')
     .toLowerCase()
-    .replace(/['‘’`´]/g, '')
+    .replace(STRIPPABLE_MARK, '')
+    .normalize('NFC')
+    .replace(/\p{Cf}/gu, '')
+    .replace(/['‘’`´ʼ׳״]/g, '')
+    .replace(FOLDABLE, (char) => FOLD[char])
     .replace(/&/g, ' and ')
-    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
     .trim();
 }
 

@@ -59,10 +59,43 @@ async function fetchLyrics(artist: string, title: string): Promise<string | null
 }
 
 /**
+ * Stand-ins for the final row when there is no usable lyric. Rendered exactly
+ * like a real hint — same row, same quotes — because an empty final row reads
+ * as a broken app, and the room can't tell a lyrics.ovh timeout from a song
+ * that never had words. Rather than explain either, the game blames the song.
+ *
+ * The two failure modes deliberately share one set. "We couldn't reach the
+ * lyrics API" and "this is a 90-second ambient interlude" are the same
+ * experience from the couch, and the joke covers both without the game ever
+ * admitting which one happened.
+ *
+ * Same rules as the loading quips (lib/quips.ts): short, varied in shape, and
+ * never a hint — none of these may narrow the song down, since they're served
+ * in the slot that normally does.
+ */
+const NO_LYRIC_LINES = [
+  'This song is so bad it does not even have lyrics.',
+  'No lyrics found. Honestly, that might be a mercy.',
+  'We looked. There was nothing worth writing down.',
+  'Turns out nobody bothered transcribing this one.',
+  'Somebody wrote this and then declined to write words for it.',
+  'The lyrics are missing. Consider that a review.',
+  'No words. Whoever brought this knew what they were doing.',
+  'Searched everywhere. The song has nothing to say for itself.',
+  'Not a single line worth quoting. Impressive, in a way.',
+  'You are on your own for this one. So was the songwriter.',
+];
+
+/** One of the stand-ins above. Drawn once per round and stored, never re-rolled. */
+export function noLyricLine(): string {
+  return NO_LYRIC_LINES[Math.floor(Math.random() * NO_LYRIC_LINES.length)]!;
+}
+
+/**
  * A random lyric line usable as a final-row hint: long enough to say
  * something, and sharing no distinctive word with the title or artist, so it
  * narrows the song without naming it. Null when lyrics.ovh has no match or
- * every line would give the song away.
+ * every line would give the song away — the caller substitutes `noLyricLine`.
  */
 export async function findLyricHint(track: Track): Promise<string | null> {
   const artist = track.artists[0]?.name;

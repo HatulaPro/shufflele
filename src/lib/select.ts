@@ -4,16 +4,17 @@ import type { Track } from './types';
 /**
  * Secret-track selection. SPEC §3.2.
  *
- * Three stages: a playlist uniformly at random, then a popularity-weighted
- * track inside it, then a small uniform escape hatch so the tail stays
- * reachable. Nothing here is persisted — the only memory the picker has is the
- * exclusion set the start route already keeps on the lobby.
+ * Three stages: a contributor drawn from whoever has had the fewest rounds so
+ * far, then a popularity-weighted track inside their tracks, then a small
+ * uniform escape hatch so the tail stays reachable. Nothing here is persisted —
+ * the picker's whole memory is the exclusion set and the used-track list the
+ * start route already keeps on the lobby, both passed in as arguments.
  *
  * Every ingested track is a candidate. There used to be a sampling stage here
  * that marked a subset of the pool drawable, because popularity cost a Deezer
  * search per track and the budget only stretched so far; the Web API hands
  * popularity over with the tracklist, so there is nothing left to ration.
- * Pool size needs no cap either — `pickSecret` draws the playlist before it
+ * Pool size needs no cap either — `pickSecret` draws the contributor before it
  * ever looks at tracks, so a 500-song playlist is heard exactly as often as a
  * 30-song one.
  */
@@ -104,27 +105,100 @@ function weightedPick(playlist: Track[], weights: number[]): Track {
 }
 
 /**
+ * Fairness is per *contributor*, not per playlist. The thing that feels bad at
+ * a party is one person's music playing three rounds running while someone
+ * else's never comes up, and a player who submitted two playlists is still one
+ * person — giving them two entries in the draw would recreate exactly the
+ * problem this exists to fix.
+ *
+ * Grouping on the display name has one honest failure: two guests who both
+ * typed "Dan" share a turn. That is rarer than one person adding a second
+ * playlist, and it errs toward under-representing rather than over-, which is
+ * the cheaper mistake.
+ */
+function contributorKey(track: Track): string {
+  return track.contributor;
+}
+
+function groupBy(tracks: Track[], key: (t: Track) => string): Map<string, Track[]> {
+  const groups = new Map<string, Track[]>();
+  for (const track of tracks) {
+    const group = groups.get(key(track));
+    if (group) group.push(track);
+    else groups.set(key(track), [track]);
+  }
+  return groups;
+}
+
+/**
+ * Contributors tied for the fewest rounds played so far. This is the whole bag
+ * shuffle: draw only from the least-served, and the bag refills itself the
+ * moment everyone is level, with no explicit refill branch to get wrong.
+ *
+ * A contributor whose tracks are all used up simply stops appearing in
+ * `groups`, so the others' minimum keeps advancing rather than the draw
+ * deadlocking on someone with nothing left to give.
+ */
+function leastServed(groups: Map<string, Track[]>, played: Map<string, number>): Track[][] {
+  let fewest = Infinity;
+  let winners: Track[][] = [];
+
+  for (const [key, tracks] of groups) {
+    const count = played.get(key) ?? 0;
+    if (count < fewest) {
+      fewest = count;
+      winners = [tracks];
+    } else if (count === fewest) {
+      winners.push(tracks);
+    }
+  }
+
+  return winners;
+}
+
+/**
  * One secret-track draw from the already-filtered eligible pool.
  *
- * Playlist-first is what gives every player's playlist the same chance no
- * matter how many tracks it contributed — a 30-song playlist matters exactly
- * as much as a 300-song one, with no size normalisation anywhere.
+ * Contributor-first is what gives every player the same chance no matter how
+ * many tracks they contributed — a 30-song playlist matters exactly as much as
+ * a 300-song one, with no size normalisation anywhere.
  *
- * Cost is O(n) to group plus O(m log m) to sort the one chosen playlist, so a
+ * `alreadyPlayed` is the tracks that became real rounds, which the lobby
+ * already stores as `usedTrackIds`; passing them makes the outer draw a bag
+ * shuffle instead of sixteen independent coin flips. It is optional because
+ * the draw is still correct without it, just memoryless.
+ *
+ * Memoryless is worse than it sounds. Simulated over six contributors: with a
+ * uniform draw, six rounds leave *somebody* with nothing 98% of the time, and
+ * even ten rounds — the whole daily cap — do it 72% of the time. The bag takes
+ * both to zero, with at most one round between the busiest and quietest
+ * player, and without shifting anyone's long-run share off 1/n.
+ *
+ * Only tracks that made it to air count. A track drawn and then discarded for
+ * having no preview (see the start route's retry loop) must not spend its
+ * contributor's turn — they'd be punished for a gap in Apple's catalogue.
+ *
+ * The alternative considered was soft weighting — `exp(-times_used)` — which
+ * keeps repeats possible rather than forbidding them. The bag won on being
+ * exactly checkable: every contributor is heard once before anyone is heard
+ * twice, full stop, which is the promise worth making to a room.
+ *
+ * Cost is O(n) to group plus O(m log m) to sort the one chosen group, so a
  * 1000-track pool is well under a millisecond and the start route can afford
  * to call this once per retry attempt.
  */
-export function pickSecret(eligible: Track[]): Track | null {
+export function pickSecret(eligible: Track[], alreadyPlayed: Track[] = []): Track | null {
   if (eligible.length === 0) return null;
 
-  const byPlaylist = new Map<string, Track[]>();
-  for (const track of eligible) {
-    const group = byPlaylist.get(track.playlistId);
-    if (group) group.push(track);
-    else byPlaylist.set(track.playlistId, [track]);
+  const groups = groupBy(eligible, contributorKey);
+
+  const played = new Map<string, number>();
+  for (const track of alreadyPlayed) {
+    const key = contributorKey(track);
+    played.set(key, (played.get(key) ?? 0) + 1);
   }
 
-  const playlist = pickUniform([...byPlaylist.values()]);
+  const playlist = pickUniform(leastServed(groups, played));
 
   // Roughly one round in fourteen ignores popularity entirely. This is the
   // answer to "don't play the same handful of songs out of a 200-song

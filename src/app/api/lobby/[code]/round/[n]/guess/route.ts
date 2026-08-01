@@ -1,7 +1,7 @@
 import type { NextRequest, NextResponse } from 'next/server';
 import { fail, json } from '@/lib/http';
 import { loadRound, loadTracks, requireHost, saveRound } from '@/lib/lobby';
-import { findLyricHint } from '@/lib/lyrics';
+import { findLyricHint, noLyricLine } from '@/lib/lyrics';
 import { artistsLabel, buildLadder, tierFor, toPublicRound } from '@/lib/round';
 import { missingStems } from '@/lib/separation';
 import type { GuessLog } from '@/lib/types';
@@ -92,14 +92,19 @@ export async function POST(req: NextRequest, ctx: Ctx): Promise<NextResponse> {
 
   // The final row shows a lyric hint (SPEC §1.3). Fetched one row early so the
   // guess that unlocks the final row doesn't wait on lyrics.ovh, and stored on
-  // the round so it never changes between polls. Null (no match, timeout) is
-  // stored too — the row falls back to its plain label, and we don't retry.
+  // the round so it never changes between polls.
+  //
+  // A miss (no match, timeout, every line gives the song away) substitutes a
+  // joke line rather than leaving the row bare — an empty final row looks like
+  // the app failed. The substitution happens here, at store time, and not in
+  // the renderer, for the same reason the real hint is stored: the host polls
+  // this round several times a second and the line has to sit still.
   if (
     round.state === 'playing' &&
     round.hint === undefined &&
     round.currentRow >= round.ladder.length - 1
   ) {
-    round.hint = await findLyricHint(round.secret);
+    round.hint = (await findLyricHint(round.secret)) ?? noLyricLine();
   }
 
   await saveRound(round);

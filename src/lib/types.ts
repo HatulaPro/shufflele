@@ -125,8 +125,10 @@ export type Round = {
   /**
    * Lyric hint shown on the final row: a random line from the song sharing no
    * distinctive word with the title or artist (lib/lyrics.ts). Fetched once,
-   * one row before the final row unlocks. Absent = not fetched yet; null =
-   * lyrics.ovh had nothing usable. Never carries the title — safe to serve.
+   * one row before the final row unlocks. Absent = not fetched yet. When
+   * lyrics.ovh has nothing usable this holds a joke line instead, so the row is
+   * never blank; null only appears on rounds stored before that was true.
+   * Never carries the title — safe to serve.
    */
   hint?: string | null;
   guesses: GuessLog[];
