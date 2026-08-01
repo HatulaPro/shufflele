@@ -11,9 +11,15 @@ type Props = {
   removing?: string | null;
 };
 
+/**
+ * Both tags are verbs about the player, deliberately. "Next song" was the first
+ * label here and it read, next to a name, as "this player is up next" — which is
+ * a thing the game genuinely does, so it said roughly the opposite of what it
+ * meant. The footer under the list carries the full sentence.
+ */
 const TAG: Record<PublicPlayer['status'], string | null> = {
   in: null,
-  joining: 'next song',
+  joining: 'joins next',
   leaving: 'leaving',
 };
 
