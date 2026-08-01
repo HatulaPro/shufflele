@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import GuessModal from '@/components/GuessModal';
 import Ladder from '@/components/Ladder';
+import LobbyPanel from '@/components/LobbyPanel';
 import PlayerBar from '@/components/PlayerBar';
 import { SILENCE_FLOOR_DB, useStemPlayer } from '@/hooks/useStemPlayer';
 import { api } from '@/lib/client';
@@ -62,6 +63,7 @@ export default function Round({
   const [elapsed, setElapsed] = useState(0);
   const [quips, setQuips] = useState<string[]>([]);
   const [leaving, setLeaving] = useState(false);
+  const [lobbyOpen, setLobbyOpen] = useState(false);
   const ladderPosted = useRef(false);
 
   const player = useStemPlayer(round?.stems ?? [], round?.activeStems ?? []);
@@ -209,6 +211,19 @@ export default function Round({
   const askToLeave = () => setLeaving(true);
 
   /**
+   * The door, without leaving the song. Small and in the same corner on every
+   * screen of a round — someone arriving at the party mid-game is a thing that
+   * happens, and it shouldn't mean waiting for the song to end.
+   */
+  const lobbyButton = (
+    <button className="btn btn--ghost btn--mini" onClick={() => setLobbyOpen(true)}>
+      Lobby
+    </button>
+  );
+
+  const lobbyPanel = lobbyOpen && <LobbyPanel code={code} onClose={() => setLobbyOpen(false)} />;
+
+  /**
    * The chips that ran above the ladder while guessing. Kept in one place so the
    * result screen shows the same three stats in the same shape — the numbers the
    * player was reasoning from shouldn't change costume once the song is revealed.
@@ -244,7 +259,10 @@ export default function Round({
       <main className="shell">
         <div className="row-between">
           <h1 className="wordmark wordmark--sm">shufflele</h1>
-          <span className="chip">Song {n}</span>
+          <div className="row-tight">
+            {lobbyButton}
+            <span className="chip">Song {n}</span>
+          </div>
         </div>
 
         <div className="card stack">
@@ -271,6 +289,7 @@ export default function Round({
         </button>
 
         {leavePrompt}
+        {lobbyPanel}
       </main>
     );
   }
@@ -281,6 +300,10 @@ export default function Round({
     return (
       <main className="shell shell--center">
         <div className="stack">
+          <div className="row-between">
+            <span className="tiny">Song {n}</span>
+            {lobbyButton}
+          </div>
           <h1 className="h1">That one didn&rsquo;t work out</h1>
           <p className="notice notice--error">{round.error ?? 'The separation failed.'}</p>
           {startError && <p className="notice notice--error">{startError}</p>}
@@ -293,6 +316,7 @@ export default function Round({
         </div>
 
         {leavePrompt}
+        {lobbyPanel}
       </main>
     );
   }
@@ -305,6 +329,11 @@ export default function Round({
 
     return (
       <main className="shell">
+        <div className="row-between">
+          <span className="tiny">Song {n}</span>
+          {lobbyButton}
+        </div>
+
         <div className={`verdict ${won ? 'verdict--win' : 'verdict--lose'}`}>
           <p className="verdict__word">{won ? 'Got it' : 'Nope'}</p>
           {won && (
@@ -358,6 +387,7 @@ export default function Round({
         </div>
 
         {leavePrompt}
+        {lobbyPanel}
       </main>
     );
   }
@@ -370,9 +400,12 @@ export default function Round({
         <button className="btn btn--quiet" onClick={askToLeave}>
           End game
         </button>
-        <span className="tiny">
-          Row {round.currentRow} of {round.totalRows}
-        </span>
+        <div className="row-tight">
+          {lobbyButton}
+          <span className="tiny">
+            Row {round.currentRow} of {round.totalRows}
+          </span>
+        </div>
       </div>
 
       {metaBar}
@@ -404,6 +437,7 @@ export default function Round({
       )}
 
       {leavePrompt}
+      {lobbyPanel}
     </main>
   );
 }

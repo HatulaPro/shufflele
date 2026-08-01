@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import JoinForm from '@/components/JoinForm';
+import PlayerList from '@/components/PlayerList';
 import Round from '@/components/Round';
 import { api } from '@/lib/client';
 import type { PublicLobby } from '@/lib/types';
@@ -15,8 +16,12 @@ export default function HostGame({ code }: { code: string }) {
   const [roundNumber, setRoundNumber] = useState<number | null>(null);
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
-  const [hostJoined, setHostJoined] = useState(false);
+  /** Set the moment this phone's own playlist goes in, before the next poll. */
+  const [justJoined, setJustJoined] = useState(false);
   const [closing, setClosing] = useState(false);
+  const [removing, setRemoving] = useState<string | null>(null);
+  /** Kept apart from `loadError`, which swaps out the whole screen. */
+  const [removeError, setRemoveError] = useState<string | null>(null);
   const [origin, setOrigin] = useState('');
   /** The lobby keeps `currentRound` set after a round ends, so the resume below
       must only ever fire once — otherwise leaving a round bounces straight back
@@ -68,6 +73,26 @@ export default function HostGame({ code }: { code: string }) {
       setStarting(false);
     }
   }, [code]);
+
+  /**
+   * Nothing has started yet, so a removal here is immediate: the player and
+   * their tracks are gone by the time the response lands. Mid-game the same
+   * route defers to the next song — see lib/lobby.ts.
+   */
+  const removePlayer = useCallback(
+    async (id: string) => {
+      setRemoving(id);
+      setRemoveError(null);
+      try {
+        setLobby(await api<PublicLobby>(`/api/lobby/${code}/players/${id}`, { method: 'DELETE' }));
+      } catch (err) {
+        setRemoveError(err instanceof Error ? err.message : 'Could not remove that player.');
+      } finally {
+        setRemoving(null);
+      }
+    },
+    [code],
+  );
 
   /**
    * Ending the game closes the lobby outright — the code is freed and this
@@ -165,27 +190,20 @@ export default function HostGame({ code }: { code: string }) {
           <h2 className="h2">Players</h2>
           <span className="tiny">{lobby.players.length} in</span>
         </div>
-        {lobby.players.length === 0 ? (
-          <p className="empty">Nobody yet. Read out the code.</p>
-        ) : (
-          <ul className="players">
-            {lobby.players.map((player) => (
-              <li className="player" key={player.id}>
-                <span className="player__dot" />
-                <span className="player__name">{player.name}</span>
-                <span className="player__meta">{player.trackCount} tracks</span>
-              </li>
-            ))}
-          </ul>
-        )}
+        <PlayerList players={lobby.players} onRemove={removePlayer} removing={removing} />
       </section>
 
-      {!hostJoined && (
+      {removeError && <p className="notice notice--error">{removeError}</p>}
+
+      {/* The lobby remembers which player is the host's, so a refresh mid-setup
+          no longer offers to add a second one. `justJoined` covers the couple of
+          seconds before the poll catches up. */}
+      {!justJoined && !lobby.players.some((p) => p.isHost) && (
         <section className="card">
           <h2 className="h2" style={{ marginBottom: 10 }}>
             Add your own playlist
           </h2>
-          <JoinForm code={code} submitLabel="Add mine" onJoined={() => setHostJoined(true)} />
+          <JoinForm code={code} submitLabel="Add mine" onJoined={() => setJustJoined(true)} />
         </section>
       )}
 

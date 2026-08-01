@@ -54,6 +54,23 @@ export type Player = {
   playlistName: string;
   trackCount: number;
   joinedAt: number;
+  /**
+   * First round this playlist is eligible for. 1 for anyone in before the game
+   * started, otherwise the round after whichever one was in play when they
+   * joined — a roster change never disturbs the song already on air.
+   *
+   * The three fields below are absent on players stored before mid-game roster
+   * changes existed, so read them through `playsIn`: those players have been in
+   * since round 1, are not leaving, and are owed nothing.
+   */
+  activeFrom?: number;
+  /** Last round they stay in, set when the host removes them. */
+  removedAfter?: number | null;
+  /**
+   * Rounds credited at join time, so the fairness draw doesn't treat a late
+   * joiner as owed every round the room already played. See `joinCredit`.
+   */
+  creditedRounds?: number;
 };
 
 export type Lobby = {
@@ -61,6 +78,14 @@ export type Lobby = {
   hostToken: string;
   createdAt: number;
   players: Player[];
+  /**
+   * The player the host phone added for itself, once it has. They run the game
+   * from that phone, so they are the one player nobody can remove — including
+   * themselves, which would otherwise be one tap from leaving the room with a
+   * game it can't be thrown out of. Absent until they add a playlist, and on
+   * lobbies stored before this was recorded.
+   */
+  hostPlayerId?: string | null;
   /** 0 while nobody has started a round yet. */
   currentRound: number;
   /** Secret tracks already used, so a lobby never repeats a song. */
@@ -177,10 +202,24 @@ export type PublicRound = {
   } | null;
 };
 
+export type PublicPlayer = {
+  id: string;
+  name: string;
+  trackCount: number;
+  /** The host's own playlist. Can't be removed by anyone. */
+  isHost: boolean;
+  /**
+   * `joining` — added while a song was on air, in from the next one.
+   * `leaving` — the host removed them, out from the next one.
+   */
+  status: 'in' | 'joining' | 'leaving';
+};
+
 export type PublicLobby = {
   code: string;
   isHost: boolean;
-  players: { id: string; name: string; trackCount: number }[];
+  players: PublicPlayer[];
+  /** Only what the round in play draws from — a joiner's tracks aren't counted yet. */
   trackCount: number;
   currentRound: number;
   canStart: boolean;

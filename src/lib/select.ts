@@ -120,6 +120,36 @@ function contributorKey(track: Track): string {
   return track.contributor;
 }
 
+/**
+ * How many rounds each contributor has actually had on air, from the lobby's
+ * `usedTrackIds` and the pool those ids point into.
+ *
+ * One entry per *round*, not per copy in the pool. Nothing dedupes the pool on
+ * ingest, so a song two people both submitted is two rows sharing an id, and
+ * counting naively would charge both of them a turn for the one round it played
+ * — sharing a popular song would cost you airtime. The first row wins, matching
+ * the reveal, which credits a single contributor for the track.
+ *
+ * An id the pool no longer holds counts for nobody. That is a track whose
+ * contributor has since left the game, and their old turns should not go on
+ * suppressing anyone.
+ */
+export function roundsByContributor(usedTrackIds: string[], pool: Track[]): Map<string, number> {
+  const owners = new Map<string, Track>();
+  for (const track of pool) {
+    if (!owners.has(track.spotifyId)) owners.set(track.spotifyId, track);
+  }
+
+  const counts = new Map<string, number>();
+  for (const id of usedTrackIds) {
+    const track = owners.get(id);
+    if (!track) continue;
+    const key = contributorKey(track);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return counts;
+}
+
 function groupBy(tracks: Track[], key: (t: Track) => string): Map<string, Track[]> {
   const groups = new Map<string, Track[]>();
   for (const track of tracks) {
@@ -163,10 +193,11 @@ function leastServed(groups: Map<string, Track[]>, played: Map<string, number>):
  * many tracks they contributed — a 30-song playlist matters exactly as much as
  * a 300-song one, with no size normalisation anywhere.
  *
- * `alreadyPlayed` is the tracks that became real rounds, which the lobby
- * already stores as `usedTrackIds`; passing them makes the outer draw a bag
- * shuffle instead of sixteen independent coin flips. It is optional because
- * the draw is still correct without it, just memoryless.
+ * `played` is how many rounds each contributor has been on air for (see
+ * `roundsByContributor`, and `contributorCounts` in lib/lobby.ts, which folds in
+ * what a late joiner was credited with). Passing it makes the outer draw a bag
+ * shuffle instead of sixteen independent coin flips. It is optional because the
+ * draw is still correct without it, just memoryless.
  *
  * Memoryless is worse than it sounds. Simulated over six contributors: with a
  * uniform draw, six rounds leave *somebody* with nothing 98% of the time, and
@@ -187,17 +218,13 @@ function leastServed(groups: Map<string, Track[]>, played: Map<string, number>):
  * 1000-track pool is well under a millisecond and the start route can afford
  * to call this once per retry attempt.
  */
-export function pickSecret(eligible: Track[], alreadyPlayed: Track[] = []): Track | null {
+export function pickSecret(
+  eligible: Track[],
+  played: Map<string, number> = new Map(),
+): Track | null {
   if (eligible.length === 0) return null;
 
   const groups = groupBy(eligible, contributorKey);
-
-  const played = new Map<string, number>();
-  for (const track of alreadyPlayed) {
-    const key = contributorKey(track);
-    played.set(key, (played.get(key) ?? 0) + 1);
-  }
-
   const playlist = pickUniform(leastServed(groups, played));
 
   // Roughly one round in fourteen ignores popularity entirely. This is the

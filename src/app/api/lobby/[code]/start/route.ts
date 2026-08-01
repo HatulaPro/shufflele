@@ -1,7 +1,14 @@
 import type { NextRequest, NextResponse } from 'next/server';
 import { fail, json } from '@/lib/http';
 import { findItunesMatch } from '@/lib/itunes';
-import { loadTracks, randomToken, requireHost, saveLobby, saveRound } from '@/lib/lobby';
+import {
+  contributorCounts,
+  randomToken,
+  requireHost,
+  saveLobby,
+  saveRound,
+  settleRoster,
+} from '@/lib/lobby';
 import { parFor } from '@/lib/par';
 import { consumeGameCredit, refundGameCredit } from '@/lib/ratelimit';
 import { baseUrl, createSeparation } from '@/lib/replicate';
@@ -26,7 +33,12 @@ export async function POST(_req: NextRequest, ctx: Ctx): Promise<NextResponse> {
   if (!auth.ok) return fail(auth.error, auth.status);
   const lobby = auth.lobby;
 
-  const pool = await loadTracks(code);
+  const n = lobby.currentRound + 1;
+
+  // The one place the roster moves. Anyone added while the last song was on air
+  // joins here, anyone the host removed leaves here, and what comes back is the
+  // pool as this round sees it. See lib/lobby.ts.
+  const pool = await settleRoster(lobby, n);
   if (pool.length === 0) {
     return fail('Nobody has added a playlist yet.', 400);
   }
@@ -43,23 +55,11 @@ export async function POST(_req: NextRequest, ctx: Ctx): Promise<NextResponse> {
   // have neither a Spotify preview nor an iTunes match. SPEC §3.2.
   const excluded = new Set([...lobby.usedTrackIds, ...lobby.unusableTrackIds]);
 
-  // What each contributor has actually had on air, for the fairness draw. Read
-  // from `usedTrackIds` only: a track that was picked and then thrown out for
-  // having no preview never reached the room, so it must not count as that
-  // player's turn. Resolved once — the loop below doesn't add to it.
-  //
-  // One entry per *round*, not per copy in the pool. Nothing dedupes the pool
-  // on ingest, so a song two people both submitted is two rows sharing an id,
-  // and filtering naively would charge both of them a turn for the one round it
-  // played — sharing a popular song would cost you airtime. The first row wins,
-  // matching the reveal, which credits a single contributor for the track.
-  const played = new Map<string, Track>();
-  for (const track of pool) {
-    if (!played.has(track.spotifyId)) played.set(track.spotifyId, track);
-  }
-  const alreadyPlayed = lobby.usedTrackIds
-    .map((id) => played.get(id))
-    .filter((t): t is Track => t !== undefined);
+  // What each contributor has had on air, for the fairness draw. Read from
+  // `usedTrackIds` only: a track that was picked and then thrown out for having
+  // no preview never reached the room, so it must not count as that player's
+  // turn. Resolved once — the loop below doesn't add to it.
+  const played = contributorCounts(lobby, pool, n);
 
   let chosen: Track | null = null;
   let previewUrl: string | null = null;
@@ -70,7 +70,7 @@ export async function POST(_req: NextRequest, ctx: Ctx): Promise<NextResponse> {
 
     // Least-served contributor, then popularity-weighted inside their tracks.
     // See lib/select.ts.
-    const track = pickSecret(eligible, alreadyPlayed);
+    const track = pickSecret(eligible, played);
     if (!track) break;
 
     // iTunes is the preview source, and now the only thing it is asked for.
@@ -119,7 +119,6 @@ export async function POST(_req: NextRequest, ctx: Ctx): Promise<NextResponse> {
     );
   }
 
-  const n = lobby.currentRound + 1;
   const webhookKey = randomToken();
   const webhookUrl = `${baseUrl()}/api/replicate/webhook?code=${encodeURIComponent(
     code,

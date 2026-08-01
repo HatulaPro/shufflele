@@ -3,7 +3,12 @@
 import { type FormEvent, useState } from 'react';
 import { api } from '@/lib/client';
 
-export type JoinResult = { playlistName: string; trackCount: number };
+export type JoinResult = {
+  playlistName: string;
+  trackCount: number;
+  /** Joined mid-game: the tracks are in from the next song, not this one. */
+  pending: boolean;
+};
 
 type Props = {
   code: string;

@@ -1,6 +1,6 @@
 import type { NextRequest, NextResponse } from 'next/server';
 import { fail, json } from '@/lib/http';
-import { loadRound, loadTracks, requireHost, saveRound } from '@/lib/lobby';
+import { loadRound, loadTracks, poolFor, requireHost, saveRound } from '@/lib/lobby';
 import { findLyricHint, noLyricLine } from '@/lib/lyrics';
 import { artistsLabel, buildLadder, tierFor, toPublicRound } from '@/lib/round';
 import { missingStems } from '@/lib/separation';
@@ -63,7 +63,10 @@ export async function POST(req: NextRequest, ctx: Ctx): Promise<NextResponse> {
       return fail('That track has already been guessed.', 400);
     }
 
-    const pool = await loadTracks(code);
+    // Judged against this round's roster, the same one the guess list was built
+    // from — a playlist that joined mid-song isn't guessable yet, and a removed
+    // one still scores its playlist tier for the round it was part of.
+    const pool = poolFor(auth.lobby, await loadTracks(code), round.n);
     const guessed = pool.find((t) => t.spotifyId === trackId);
     const result = tierFor(trackId, round.secret, pool);
     if (!guessed || !result) return fail('That track is not in this game.', 400);

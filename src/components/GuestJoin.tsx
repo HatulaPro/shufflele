@@ -19,6 +19,9 @@ export default function GuestJoin({ code }: { code: string }) {
             <h1 className="h1">Thanks</h1>
             <p className="tagline">
               {done.trackCount} {done.trackCount === 1 ? 'track' : 'tracks'} added to the pool.
+              {/* Arriving mid-game is allowed; the song already playing just
+                  isn't changed by it. */}
+              {done.pending && ' You’re in from the next song.'}
             </p>
           </div>
         </div>

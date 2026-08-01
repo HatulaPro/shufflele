@@ -37,6 +37,14 @@ Then open the app on the host phone, tap **Create lobby**, and read the six digi
 Guests open the join link, give a name and paste a link to a public playlist of theirs; the pool
 is everyone's music mixed together. **Start game** lights up once one playlist is in.
 
+The door stays open all game. Someone who turns up at song five joins the same way, and the
+**Lobby** button on the host's screen shows who is in, how much music each of them put in, and
+the code to read out again — plus a way to remove anyone but the host, whose phone is running
+the game. Neither kind of change touches the song already playing: a late joiner's playlist and
+a removed player's both take effect on the next song, so a round's guess list can't shift under
+it. A late joiner enters the fairness draw level with whoever is currently least-served, rather
+than being owed every song they missed.
+
 ### Reading playlists
 
 Playlists come from the Web API proper: `GET /v1/playlists/{id}` for the name, then

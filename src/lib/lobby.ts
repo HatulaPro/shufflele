@@ -1,7 +1,8 @@
 import crypto from 'node:crypto';
 import { cookies } from 'next/headers';
 import { LOBBY_TTL_SECONDS, keys, redis } from './redis';
-import type { Lobby, Round, Track } from './types';
+import { roundsByContributor } from './select';
+import type { Lobby, Player, PublicLobby, Round, Track } from './types';
 
 export function randomToken(): string {
   return crypto.randomBytes(24).toString('base64url');
@@ -68,6 +69,139 @@ export async function loadTracks(code: string): Promise<Track[]> {
 
 export async function saveTracks(code: string, tracks: Track[]): Promise<void> {
   await redis().set(keys.tracks(code), tracks, { ex: LOBBY_TTL_SECONDS });
+}
+
+// --- roster ---------------------------------------------------------------
+//
+// The player list is editable while a game runs, but a change never lands on
+// the song already on air: that round's guess list, its fairness draw and its
+// secret were all fixed the moment it started, and pulling a playlist out from
+// under it would either shrink the answer set mid-guess or, if the secret was
+// theirs, make the round unwinnable. So joins and removals both queue on the
+// round boundary, and every read filters the pool through `playsIn`. Before the
+// game starts there is no round to protect and everything applies at once —
+// which falls out of the same arithmetic, since a pre-game joiner is active
+// from round 1 and the first round to start is round 1.
+
+/** Is this player's playlist part of round `n`? */
+export function playsIn(player: Player, n: number): boolean {
+  return (player.activeFrom ?? 1) <= n && n <= (player.removedAfter ?? Infinity);
+}
+
+/** The roster as round `n` sees it. */
+export function rosterFor(lobby: Lobby, n: number): Player[] {
+  return lobby.players.filter((player) => playsIn(player, n));
+}
+
+/** Of a stored pool, the tracks round `n` is allowed to draw on. */
+export function poolFor(lobby: Lobby, pool: Track[], n: number): Track[] {
+  const ids = new Set(rosterFor(lobby, n).map((p) => p.playlistId));
+  return pool.filter((track) => ids.has(track.playlistId));
+}
+
+/**
+ * The round the lobby screen judges the roster against: the one in play, or the
+ * first one when nothing has started yet.
+ */
+export function liveRound(lobby: Lobby): number {
+  return Math.max(lobby.currentRound, 1);
+}
+
+/**
+ * Rounds on air per contributor, as the fairness draw counts them: what they
+ * have played, plus whatever they were credited on arrival.
+ */
+export function contributorCounts(lobby: Lobby, pool: Track[], n: number): Map<string, number> {
+  const credited = new Map<string, number>();
+  for (const player of rosterFor(lobby, n)) {
+    const credit = player.creditedRounds ?? 0;
+    const current = credited.get(player.name);
+    // Two guests can share a display name, and the draw already treats them as
+    // one contributor (see lib/select.ts). The longest-standing one sets the
+    // credit — a namesake arriving late must not push the original down the
+    // queue.
+    credited.set(player.name, current === undefined ? credit : Math.min(current, credit));
+  }
+
+  const played = roundsByContributor(lobby.usedTrackIds, pool);
+  for (const [name, credit] of credited) {
+    credited.set(name, credit + (played.get(name) ?? 0));
+  }
+  return credited;
+}
+
+/**
+ * What a player joining right now should be credited with: the count of whoever
+ * is least-served in the round they are about to enter.
+ *
+ * Without it the bag would read a late joiner's empty history as being owed
+ * every round the room already had — join at song six and the next five songs
+ * are all yours, which is worse for them than for anyone. Level with the
+ * quietest player means they are in the very next draw on equal terms, and no
+ * more than that. Frozen here rather than derived at draw time: the floor rises
+ * as the game goes on, and a credit that drifts up with it would leave them
+ * permanently over-served instead.
+ *
+ * Measured over the round they'll first be drawn in, not the one on air, so
+ * that a player on their way out — still in the current round, never in another
+ * one — can't set a floor the joiner will never actually be competing against.
+ */
+export function joinCredit(lobby: Lobby, pool: Track[]): number {
+  let floor = Infinity;
+  for (const count of contributorCounts(lobby, pool, lobby.currentRound + 1).values()) {
+    if (count < floor) floor = count;
+  }
+  return Number.isFinite(floor) ? floor : 0;
+}
+
+/**
+ * Applies the changes waiting on the boundary into round `n` and returns the
+ * pool that round draws from. Anyone the host removed leaves here for good,
+ * taking their tracks with them, which is also what frees their playlist to be
+ * added again later.
+ */
+export async function settleRoster(lobby: Lobby, n: number): Promise<Track[]> {
+  const stored = await loadTracks(lobby.code);
+  const departed = new Set(
+    lobby.players
+      .filter((player) => !playsIn(player, n) && player.removedAfter != null)
+      .map((player) => player.playlistId),
+  );
+
+  let pool = stored;
+  if (departed.size > 0) {
+    lobby.players = lobby.players.filter((player) => !departed.has(player.playlistId));
+    pool = stored.filter((track) => !departed.has(track.playlistId));
+    // Written before the round is picked, because a removal is the host's call
+    // and stands whether or not this round ends up starting.
+    await saveTracks(lobby.code, pool);
+    await saveLobby(lobby);
+  }
+
+  return poolFor(lobby, pool, n);
+}
+
+export function toPublicLobby(lobby: Lobby, isHost: boolean): PublicLobby {
+  const n = liveRound(lobby);
+  const roster = rosterFor(lobby, n);
+  const trackCount = roster.reduce((sum, p) => sum + p.trackCount, 0);
+
+  return {
+    code: lobby.code,
+    isHost,
+    // The playlist's name never reaches the host screen — an audience can read
+    // that screen, and a playlist title is a giveaway. SPEC §1.5.
+    players: lobby.players.map((player) => ({
+      id: player.id,
+      name: player.name,
+      trackCount: player.trackCount,
+      isHost: player.id === lobby.hostPlayerId,
+      status: player.removedAfter != null ? 'leaving' : playsIn(player, n) ? 'in' : 'joining',
+    })),
+    trackCount,
+    currentRound: lobby.currentRound,
+    canStart: trackCount > 0,
+  };
 }
 
 export async function loadRound(code: string, n: number): Promise<Round | null> {

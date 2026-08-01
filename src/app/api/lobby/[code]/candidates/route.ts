@@ -1,6 +1,6 @@
 import type { NextRequest, NextResponse } from 'next/server';
 import { fail, json } from '@/lib/http';
-import { loadTracks, requireHost } from '@/lib/lobby';
+import { liveRound, loadTracks, poolFor, requireHost } from '@/lib/lobby';
 import { normalize } from '@/lib/normalize';
 import { artistsLabel } from '@/lib/round';
 import type { Candidate } from '@/lib/types';
@@ -19,7 +19,10 @@ export async function GET(_req: NextRequest, ctx: Ctx): Promise<NextResponse> {
   const auth = await requireHost(code);
   if (!auth.ok) return fail(auth.error, auth.status);
 
-  const pool = await loadTracks(code);
+  // The roster the round in play was drawn from, not the roster right now: a
+  // playlist added mid-song must not quietly widen the answer set, and one the
+  // host removed has to stay guessable until the song is over.
+  const pool = poolFor(auth.lobby, await loadTracks(code), liveRound(auth.lobby));
   const seen = new Set<string>();
   const candidates: Candidate[] = [];
 
