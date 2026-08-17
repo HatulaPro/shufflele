@@ -185,6 +185,10 @@ start ──► pick a track (least-served contributor, popularity-weighted, unu
       host's browser decodes each stem, measures RMS, reports the dead ones
                         ▼
                   round: playing ──► guesses ──► won / lost
+                        │
+                        └──► prefetch: the *next* round is picked and sent to
+                             Demucs now, while this one is being guessed, so
+                             "Next song" usually finds its stems already done
 ```
 
 `vocals` is separated but never leaves the server, so it can't be pulled out of devtools. Stem
@@ -234,6 +238,16 @@ lyric videos, and adding them would count the same recording three times. Resolv
 time, so it can't drift between polls, and rounded hard on display — it's a sense of scale, not a
 chart position. One round costs 101 of the free tier's 10,000 daily quota units, and without
 `YOUTUBE_API_KEY` the chip just never renders.
+
+**The next song is separated while the current one plays.** The moment a round reaches
+`playing`, the server picks the next secret and starts its Demucs job in the background
+([`src/lib/prefetch.ts`](src/lib/prefetch.ts)), storing it under the next round number without
+advancing the lobby. "Next song" then just claims it — after re-checking the secret against the
+settled roster, since a player removed mid-song may have taken the picked track with them; a stale
+or failed prefetch is silently discarded and the start route picks from scratch as before. Nothing
+about this is visible in the UI beyond a shorter wait, a player joining mid-song simply waits one
+extra round before their playlist is drawn, and a prefetch still spends a daily game credit — at
+the cap it just doesn't run.
 
 **Rate limiting counts rounds, not lobbies** — `INCR ratelimit:games:{today}`, checked before any
 GPU time is spent, refunded if the round fails to launch. Default 10/day, `GAMES_PER_DAY` to change.

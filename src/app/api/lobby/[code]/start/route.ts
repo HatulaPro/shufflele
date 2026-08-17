@@ -1,31 +1,45 @@
 import type { NextRequest, NextResponse } from 'next/server';
 import { fail, json } from '@/lib/http';
-import { findItunesMatch } from '@/lib/itunes';
 import {
   contributorCounts,
-  randomToken,
+  loadRound,
   requireHost,
   saveLobby,
-  saveRound,
   settleRoster,
 } from '@/lib/lobby';
-import { parFor } from '@/lib/par';
-import { consumeGameCredit, refundGameCredit } from '@/lib/ratelimit';
-import { baseUrl, createSeparation } from '@/lib/replicate';
-import { pickSecret } from '@/lib/select';
-import type { Round, Track } from '@/lib/types';
-import { findPlayCount } from '@/lib/youtube';
+import { prepareRound } from '@/lib/prepare';
+import { keys, redis } from '@/lib/redis';
+import type { Round } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-const MAX_PICK_ATTEMPTS = 8;
-
 type Ctx = { params: Promise<{ code: string }> };
 
 /**
- * Rate-limit check, pick a track, kick off Demucs. Returns as soon as the
- * prediction exists — the host then polls the round route. SPEC §3.3.
+ * A prefetched round (lib/prefetch.ts) was drawn from the roster as it stood
+ * mid-song, and the roster may have moved since: if the secret's playlist has
+ * left the game, airing it would credit — and reveal — a departed player. The
+ * settled pool is the authority. A failed prefetch is also thrown back rather
+ * than shown; the host asked for a song, not for last round's bad luck.
+ */
+function adoptable(round: Round | null, pool: { spotifyId: string; playlistId: string }[]) {
+  return Boolean(
+    round?.prefetched &&
+      round.state !== 'failed' &&
+      pool.some(
+        (t) =>
+          t.spotifyId === round.secret.spotifyId && t.playlistId === round.secret.playlistId,
+      ),
+  );
+}
+
+/**
+ * Puts the next round on air. Usually that round already exists — it was
+ * prefetched while the last song played — and this just claims it; the host
+ * then polls the round route, which resolves as fast as the separation is
+ * done. Only when there is nothing usable to claim does this fall back to
+ * picking and separating from scratch. SPEC §3.3.
  */
 export async function POST(_req: NextRequest, ctx: Ctx): Promise<NextResponse> {
   const { code } = await ctx.params;
@@ -43,132 +57,55 @@ export async function POST(_req: NextRequest, ctx: Ctx): Promise<NextResponse> {
     return fail('Nobody has added a playlist yet.', 400);
   }
 
-  const limit = await consumeGameCredit();
-  if (!limit.allowed) {
-    return fail(
-      `Daily limit reached — Shufflele runs ${limit.limit} songs a day to keep the GPU bill honest. Come back tomorrow.`,
-      429,
-    );
+  const prefetched = await loadRound(code, n);
+  if (prefetched?.prefetched) {
+    if (adoptable(prefetched, pool)) {
+      // The track's turn is spent now, on air, not at prefetch time — a
+      // prefetch that never airs must not count against its contributor.
+      lobby.currentRound = n;
+      lobby.usedTrackIds.push(prefetched.secret.spotifyId);
+      await saveLobby(lobby);
+      return json({ n });
+    }
+    // Stale or failed — clear the slot and pick fresh below. The orphaned
+    // prediction's webhook finds no matching key and is ignored.
+    await redis().del(keys.round(code, n));
   }
-
-  // Selection and preview resolution are one loop, because a picked track may
-  // have neither a Spotify preview nor an iTunes match. SPEC §3.2.
-  const excluded = new Set([...lobby.usedTrackIds, ...lobby.unusableTrackIds]);
 
   // What each contributor has had on air, for the fairness draw. Read from
   // `usedTrackIds` only: a track that was picked and then thrown out for having
   // no preview never reached the room, so it must not count as that player's
-  // turn. Resolved once — the loop below doesn't add to it.
+  // turn. Resolved once — the pick loop doesn't add to it.
   const played = contributorCounts(lobby, pool, n);
 
-  let chosen: Track | null = null;
-  let previewUrl: string | null = null;
-
-  for (let attempt = 0; attempt < MAX_PICK_ATTEMPTS; attempt++) {
-    const eligible = pool.filter((t) => !excluded.has(t.spotifyId));
-    if (eligible.length === 0) break;
-
-    // Least-served contributor, then popularity-weighted inside their tracks.
-    // See lib/select.ts.
-    const track = pickSecret(eligible, played);
-    if (!track) break;
-
-    // iTunes is the preview source, and now the only thing it is asked for.
-    // Spotify's own preview is the exact recording, which is tempting, but its
-    // length is wildly inconsistent — sampled across two playlists, only a
-    // third run the full ~30s and a third are under 20s (16s for Architects'
-    // "Curse"). A short clip makes for a bad round, so it's kept only as a
-    // fallback for tracks iTunes can't match at all, where the alternative is
-    // skipping the track entirely. Roughly one track in seven has no Spotify
-    // preview either, and those are the ones a missed match costs us.
-    //
-    // Album art and release year used to come from here too. They arrive with
-    // the tracklist now, so a track iTunes fluffs still reveals properly.
-    const match = await findItunesMatch(track);
-    const preview = match?.previewUrl ?? track.previewUrl ?? null;
-
-    if (preview) {
-      chosen = {
-        ...track,
-        albumArt: track.albumArt ?? match?.albumArt ?? null,
-        releaseYear: track.releaseYear ?? match?.releaseYear ?? null,
-      };
-      previewUrl = preview;
-      break;
-    }
-
-    // The one place a track silently leaves the game. Worth a line in the logs:
-    // "that playlist never comes up" is indistinguishable from bad luck without
-    // it, and a run of rejections all from one contributor is the tell.
-    console.warn(
-      `[start] ${code}: dropped "${track.title}" from ${track.contributor} — ` +
-        `no iTunes match and no Spotify preview ` +
-        `(attempt ${attempt + 1}/${MAX_PICK_ATTEMPTS})`,
-    );
-
-    excluded.add(track.spotifyId);
-    lobby.unusableTrackIds.push(track.spotifyId);
-  }
-
-  if (!chosen || !previewUrl) {
-    await refundGameCredit();
-    await saveLobby(lobby); // keep the "unusable" marks so we don't retry them
-    return fail(
-      "Couldn't find a playable track. Every song we tried is missing a preview — add another playlist and try again.",
-      503,
-    );
-  }
-
-  const webhookKey = randomToken();
-  const webhookUrl = `${baseUrl()}/api/replicate/webhook?code=${encodeURIComponent(
-    code,
-  )}&n=${n}&k=${encodeURIComponent(webhookKey)}`;
-
-  let predictionId: string;
-  try {
-    const prediction = await createSeparation(previewUrl, webhookUrl);
-    predictionId = prediction.id;
-  } catch (error) {
-    await refundGameCredit();
-    await saveLobby(lobby);
-    return fail(
-      error instanceof Error ? error.message : 'Could not start the separation job.',
-      502,
-    );
-  }
-
-  const scoring = parFor(chosen.popularity);
-
-  // Resolved here rather than lazily like the lyric hint: this is header
-  // metadata, so it has to be there from the first row, and the round is about
-  // to sit in Demucs for a minute anyway. Capped internally, null on failure.
-  const playCount = await findPlayCount(chosen);
-
-  const round: Round = {
+  const result = await prepareRound(
     code,
     n,
-    state: 'preparing',
-    error: null,
-    secret: chosen,
-    par: scoring?.par ?? null,
-    difficulty: scoring?.difficulty ?? null,
-    playCount,
-    previewUrl,
-    predictionId,
-    webhookKey,
-    stems: {},
-    silentStems: [],
-    ladder: null,
-    currentRow: 1,
-    guesses: [],
-    createdAt: Date.now(),
-    polledAt: 0,
-  };
+    pool,
+    [...lobby.usedTrackIds, ...lobby.unusableTrackIds],
+    played,
+  );
+  lobby.unusableTrackIds.push(...result.unusable);
 
-  await saveRound(round);
+  if (!result.ok) {
+    await saveLobby(lobby); // keep the "unusable" marks so we don't retry them
+    if (result.reason === 'limit') {
+      return fail(
+        `Daily limit reached — Shufflele runs ${result.limit} songs a day to keep the GPU bill honest. Come back tomorrow.`,
+        429,
+      );
+    }
+    if (result.reason === 'no-track') {
+      return fail(
+        "Couldn't find a playable track. Every song we tried is missing a preview — add another playlist and try again.",
+        503,
+      );
+    }
+    return fail(result.message, 502);
+  }
 
   lobby.currentRound = n;
-  lobby.usedTrackIds.push(chosen.spotifyId);
+  lobby.usedTrackIds.push(result.round.secret.spotifyId);
   await saveLobby(lobby);
 
   return json({ n });

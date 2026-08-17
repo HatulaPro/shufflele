@@ -42,6 +42,8 @@ export const keys = {
   lobby: (code: string) => `lobby:${code}`,
   tracks: (code: string) => `lobby:${code}:tracks`,
   round: (code: string, n: number) => `lobby:${code}:round:${n}`,
+  /** NX guard so one round slot never buys two separations. See lib/prefetch.ts. */
+  prefetchLock: (code: string, n: number) => `lobby:${code}:round:${n}:prefetch`,
   ratelimit: (day: string) => `ratelimit:games:${day}`,
   playlist: (playlistId: string) => `cache:playlist:${playlistId}`,
   /** Shared across instances so one token serves the whole deployment. */

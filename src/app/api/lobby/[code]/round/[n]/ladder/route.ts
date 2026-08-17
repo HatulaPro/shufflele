@@ -1,11 +1,16 @@
+import { after } from 'next/server';
 import type { NextRequest, NextResponse } from 'next/server';
 import { fail, json } from '@/lib/http';
 import { loadRound, requireHost, saveRound } from '@/lib/lobby';
+import { prefetchNextRound } from '@/lib/prefetch';
 import { buildLadder, toPublicRound } from '@/lib/round';
 import { missingStems } from '@/lib/separation';
 import { PLAYABLE_STEMS, type PlayableStem } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
+// The response itself is quick; the budget is for the prefetch that runs in
+// `after()`, which does the full pick-and-separate dance.
+export const maxDuration = 60;
 
 type Ctx = { params: Promise<{ code: string; n: string }> };
 
@@ -58,5 +63,14 @@ export async function POST(req: NextRequest, ctx: Ctx): Promise<NextResponse> {
   }
 
   await saveRound(round);
+
+  // The song is on air — start separating the next one now, so the wait after
+  // this round is mostly already served. Runs after the response; the host
+  // never waits on it, and it fails silently into the start route's normal
+  // path. See lib/prefetch.ts.
+  if (round.state === 'playing') {
+    after(() => prefetchNextRound(code, roundNumber));
+  }
+
   return json(toPublicRound(round));
 }

@@ -156,6 +156,13 @@ export type Round = {
    * Never carries the title — safe to serve.
    */
   hint?: string | null;
+  /**
+   * Created ahead of time while the previous song was on air, and not yet
+   * claimed by the start route. A prefetched round sits under `currentRound + 1`
+   * with the lobby unaware of it; only the start route may put it on air, after
+   * re-checking its secret against the settled roster. See lib/prefetch.ts.
+   */
+  prefetched?: boolean;
   guesses: GuessLog[];
   createdAt: number;
   /** Last time we polled Replicate directly (webhook fallback). */

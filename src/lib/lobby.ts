@@ -57,7 +57,9 @@ export async function saveLobby(lobby: Lobby): Promise<void> {
  * the game should free the code immediately.
  */
 export async function deleteLobby(lobby: Lobby): Promise<void> {
-  const rounds = Array.from({ length: lobby.currentRound }, (_, i) =>
+  // One past `currentRound`, because a prefetched next round may be sitting
+  // there unclaimed (lib/prefetch.ts).
+  const rounds = Array.from({ length: lobby.currentRound + 1 }, (_, i) =>
     keys.round(lobby.code, i + 1),
   );
   await redis().del(keys.lobby(lobby.code), keys.tracks(lobby.code), ...rounds);
