@@ -1186,22 +1186,6 @@ a {
   text-shadow: none;
 }
 
-.track-row--correct,
-.track-row--correct:disabled {
-  background: var(--t-correct-bg);
-  border-color: var(--t-correct-line);
-  color: var(--t-correct-text);
-  opacity: 1;
-}
-
-.track-row--wrong,
-.track-row--wrong:disabled {
-  background: var(--t-none-bg);
-  border-color: var(--t-none-line);
-  color: var(--t-none-text);
-  opacity: 1;
-}
-
 .rush-board {
   display: flex;
   flex-direction: column;
@@ -1250,6 +1234,22 @@ a {
   border-radius: 8px;
   object-fit: cover;
   background: var(--ink-3);
+}
+
+.track-row--correct,
+.track-row--correct:disabled {
+  background: var(--t-correct-bg);
+  border-color: var(--t-correct-line);
+  color: var(--t-correct-text);
+  opacity: 1;
+}
+
+.track-row--wrong,
+.track-row--wrong:disabled {
+  background: var(--t-none-bg);
+  border-color: var(--t-none-line);
+  color: var(--t-none-text);
+  opacity: 1;
 }
 
 /* Stands in for the album art on the row that was just tapped. */

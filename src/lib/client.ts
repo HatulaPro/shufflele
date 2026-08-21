@@ -1,3 +1,14 @@
+/** A failed response, carrying the status so callers can tell 409 from 500. */
+export class ApiError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
 /** Thin fetch wrapper: JSON in, JSON out, server error messages preserved. */
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
@@ -18,7 +29,7 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
       body && typeof body === 'object' && 'error' in body
         ? String((body as { error: unknown }).error)
         : `Something went wrong (${res.status}).`;
-    throw new Error(message);
+    throw new ApiError(message, res.status);
   }
 
   return body as T;

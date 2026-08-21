@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRushPlayer } from '@/hooks/useRushPlayer';
-import { api } from '@/lib/client';
+import { ApiError, api } from '@/lib/client';
 import { RUSH_BONUS_MS } from '@/lib/types';
 import type { PublicRush, RushSongRef } from '@/lib/types';
 
@@ -102,6 +102,24 @@ export default function RushGame({ code, closing, onClose, onBack }: Props) {
   /** Now, in server time. What every deadline comparison here runs off. */
   const serverNow = useCallback(() => Date.now() + clockOffset.current, []);
 
+  /**
+   * The run is already over on the server — the clock ran out, or a tap landed
+   * after the deadline. That is not a failure to report to the player: pick up
+   * the final state and go straight to the summary, clearing any error the
+   * losing race left behind.
+   */
+  const finishFromServer = useCallback(async () => {
+    stopSong();
+    setError(null);
+    try {
+      const next = await api<PublicRush>(`/api/lobby/${code}/rush/finish`, { method: 'POST' });
+      applyRush(next);
+    } catch {
+      // Nothing to correct with; the summary shows the last state we hold.
+    }
+    setPhase('over');
+  }, [code, stopSong, applyRush]);
+
   // Fetch wherever the run stands. A finished game lands straight on the
   // finish screen — a refresh there must not lose the summary.
   useEffect(() => {
@@ -110,6 +128,7 @@ export default function RushGame({ code, closing, onClose, onBack }: Props) {
       .then((next) => {
         if (!alive) return;
         applyRush(next);
+        if (next.over) setError(null);
         setPhase(next.over ? 'over' : 'ready');
       })
       .catch((err: unknown) =>
@@ -146,15 +165,7 @@ export default function RushGame({ code, closing, onClose, onBack }: Props) {
       const left = rush.endsAt! - serverNow();
       if (!alive) return;
       if (left <= 0) {
-        try {
-          const next = await api<PublicRush>(`/api/lobby/${code}/rush/finish`, { method: 'POST' });
-          if (!alive) return;
-          stopSong();
-          applyRush(next);
-          setPhase('over');
-        } catch {
-          if (alive) setPhase('over');
-        }
+        await finishFromServer();
         return;
       }
       setRemaining(left);
@@ -166,7 +177,7 @@ export default function RushGame({ code, closing, onClose, onBack }: Props) {
       alive = false;
       clearInterval(timer);
     };
-  }, [phase, rush?.endsAt, code, stopSong, serverNow, applyRush]);
+  }, [phase, rush?.endsAt, serverNow, finishFromServer]);
 
   const videoId = rush?.videoId ?? null;
   const previewUrl = rush?.previewUrl ?? null;
@@ -189,6 +200,11 @@ export default function RushGame({ code, closing, onClose, onBack }: Props) {
       // from the ready screen. `begin` is idempotent, so if it was only the
       // response that went missing, the retry picks the run up on the deadline
       // it already has — including one that has since run out.
+      if (err instanceof ApiError && err.status === 409) {
+        // The run ran out before the countdown did — the summary, not an error.
+        await finishFromServer();
+        return;
+      }
       stopSong();
       setCountStep(0);
       setPhase('ready');
@@ -198,7 +214,7 @@ export default function RushGame({ code, closing, onClose, onBack }: Props) {
     // countdown effect below re-runs whenever this identity changes, and
     // `setRush` above would otherwise hand it a new object and start the song
     // over on a loop. `begin` returns the same song, so both stay put.
-  }, [videoId, previewUrl, playSong, stopSong, code, applyRush]);
+  }, [videoId, previewUrl, playSong, stopSong, code, applyRush, finishFromServer]);
 
   // Ready-set-go. Runs off a single chain of timeouts so the beats can't drift.
   useEffect(() => {
@@ -249,6 +265,7 @@ export default function RushGame({ code, closing, onClose, onBack }: Props) {
 
         if (next.over) {
           stopSong();
+          setError(null);
           applyRush(next);
           setPhase('over');
         } else {
@@ -256,12 +273,18 @@ export default function RushGame({ code, closing, onClose, onBack }: Props) {
           playSong(next);
         }
       } catch (err) {
+        // A tap that landed after the deadline: the run really is over, so show
+        // the summary rather than blaming the player's last click.
+        if (err instanceof ApiError && err.status === 409) {
+          await finishFromServer();
+          return;
+        }
         setError(err instanceof Error ? err.message : 'That guess did not go through.');
       } finally {
         setBusy(false);
       }
     },
-    [busy, rush, phase, code, playSong, stopSong, applyRush],
+    [busy, rush, phase, code, playSong, stopSong, applyRush, finishFromServer],
   );
 
   /**
