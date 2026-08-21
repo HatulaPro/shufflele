@@ -49,7 +49,13 @@ export default function RushGame({ code, closing, onClose, onBack }: Props) {
   const [rush, setRush] = useState<PublicRush | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [flash, setFlash] = useState<'correct' | 'wrong' | null>(null);
+  /**
+   * The row that was just tapped, and how it went. The board is frozen on the
+   * old options while this is set, so the verdict lands on the row the player
+   * actually pressed instead of on whatever replaced it.
+   */
+  const [flash, setFlash] = useState<{ trackId: string; kind: 'correct' | 'wrong' } | null>(null);
+  const [frozen, setFrozen] = useState<PublicRush['options'] | null>(null);
   const [remaining, setRemaining] = useState<number | null>(null);
   const [countStep, setCountStep] = useState(0);
   const [best, setBest] = useState<number | null>(null);
@@ -226,8 +232,12 @@ export default function RushGame({ code, closing, onClose, onBack }: Props) {
           body: JSON.stringify({ trackId }),
         });
         const hit = next.score > rush.score;
-        setFlash(hit ? 'correct' : 'wrong');
-        setTimeout(() => setFlash(null), 550);
+        setFlash({ trackId, kind: hit ? 'correct' : 'wrong' });
+        setFrozen(rush.options);
+        setTimeout(() => {
+          setFlash(null);
+          setFrozen(null);
+        }, 550);
 
         // Only when there is a clock to have been extended: an endless run
         // scores the same but has no deadline, so a "+2s" there would be a lie.
@@ -420,32 +430,34 @@ export default function RushGame({ code, closing, onClose, onBack }: Props) {
         </div>
       </div>
 
-      {flash && (
-        <div key={`${flash}-${rush.score}-${rush.lives}`} className={`rush-flash rush-flash--${flash}`}>
-          {flash === 'correct' ? '+1' : '−1 life'}
-        </div>
-      )}
-
       {error && <p className="notice notice--error">{error}</p>}
 
       <div className="rush-board">
-        {rush.options.map((option) => (
+        {(frozen ?? rush.options).map((option) => {
+          const hit = flash?.trackId === option.spotifyId ? flash.kind : null;
+          return (
           <button
             key={option.spotifyId}
-            className="track-row"
+            className={`track-row${hit ? ` track-row--${hit}` : ''}`}
             onClick={() => guess(option.spotifyId)}
             disabled={busy}
           >
-            {option.albumArt && (
+            {hit ? (
+              <span className="track-row__art track-row__verdict" aria-hidden>
+                {hit === 'correct' ? '+1' : '−1'}
+              </span>
+            ) : (
+              option.albumArt && (
               // eslint-disable-next-line @next/next/no-img-element
               <img className="track-row__art" src={option.albumArt} alt="" />
-            )}
+            ))}
             <span className="track-row__text">
               <span className="track-row__title">{option.title}</span>
               <span className="track-row__artist">{option.artist}</span>
             </span>
           </button>
-        ))}
+          );
+        })}
       </div>
 
       <p className="tiny rush-hint">Playing from the top — tap fast.</p>

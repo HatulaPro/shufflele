@@ -24,7 +24,7 @@ const MODES: {
     mode: 'rush',
     name: 'Rush',
     blurb: 'Beat the clock. Guess as many songs as you can.',
-    points: ['30s · 1 min · infinite', '3 lives — misses cost one'],
+    points: ['1 min · 2 min · infinite', '3 lives — misses cost one'],
   },
 ];
 

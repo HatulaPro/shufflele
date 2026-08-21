@@ -40,7 +40,7 @@ import type {
  */
 
 export const MAX_RUSH_LIVES = 3;
-const OPTIONS_COUNT = 10;
+const OPTIONS_COUNT = 8;
 const MAX_PICK_ATTEMPTS = 8;
 
 /**

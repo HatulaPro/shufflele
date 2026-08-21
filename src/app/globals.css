@@ -1186,25 +1186,20 @@ a {
   text-shadow: none;
 }
 
-.rush-flash {
-  border-radius: var(--radius-sm);
-  padding: 10px 13px;
-  font-size: 15px;
-  font-weight: 750;
-  text-align: center;
-  animation: quip-in 0.2s ease both;
-}
-
-.rush-flash--correct {
+.track-row--correct,
+.track-row--correct:disabled {
   background: var(--t-correct-bg);
-  border: 1px solid var(--t-correct-line);
+  border-color: var(--t-correct-line);
   color: var(--t-correct-text);
+  opacity: 1;
 }
 
-.rush-flash--wrong {
+.track-row--wrong,
+.track-row--wrong:disabled {
   background: var(--t-none-bg);
-  border: 1px solid var(--t-none-line);
+  border-color: var(--t-none-line);
   color: var(--t-none-text);
+  opacity: 1;
 }
 
 .rush-board {
@@ -1255,6 +1250,17 @@ a {
   border-radius: 8px;
   object-fit: cover;
   background: var(--ink-3);
+}
+
+/* Stands in for the album art on the row that was just tapped. */
+.track-row__verdict {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  font-weight: 750;
+  background: rgba(0, 0, 0, 0.18);
+  animation: quip-in 0.2s ease both;
 }
 
 .track-row__text {
