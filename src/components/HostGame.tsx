@@ -10,6 +10,8 @@ import RushGame from '@/components/RushGame';
 import { api } from '@/lib/client';
 import type { PublicLobby } from '@/lib/types';
 
+const TIME_CONTROL_KEY = 'shufflele:rush-time-control';
+
 export default function HostGame({ code }: { code: string }) {
   const router = useRouter();
   const [lobby, setLobby] = useState<PublicLobby | null>(null);
@@ -24,8 +26,18 @@ export default function HostGame({ code }: { code: string }) {
   /** Kept apart from `loadError`, which swaps out the whole screen. */
   const [removeError, setRemoveError] = useState<string | null>(null);
   const [origin, setOrigin] = useState('');
-  /** Rush mode: seconds on the clock, 0 = infinite. A default beats making everyone read three options. */
-  const [timeControl, setTimeControl] = useState<0 | 60 | 120>(60);
+  /** Rush mode: seconds on the clock, 0 = infinite. A default beats making everyone read three options.
+      The last pick sticks around on this phone — hosts tend to run the same clock every night. */
+  const [timeControl, setTimeControl] = useState<0 | 60 | 120>(() => {
+    if (typeof window === 'undefined') return 60;
+    const saved = Number(window.localStorage.getItem(TIME_CONTROL_KEY));
+    return saved === 0 || saved === 60 || saved === 120 ? saved : 60;
+  });
+
+  const pickTimeControl = (value: 0 | 60 | 120) => {
+    setTimeControl(value);
+    window.localStorage.setItem(TIME_CONTROL_KEY, String(value));
+  };
   /** Set once a Rush game exists — covers both starting one and resuming after a refresh. */
   const [rushActive, setRushActive] = useState(false);
   /** The lobby keeps `currentRound` set after a round ends, so the resume below
@@ -251,7 +263,7 @@ export default function HostGame({ code }: { code: string }) {
                   className={`seg__btn ${value === 0 ? 'seg__btn--inf' : ''} ${
                     timeControl === value ? 'seg__btn--on' : ''
                   }`}
-                  onClick={() => setTimeControl(value)}
+                  onClick={() => pickTimeControl(value)}
                 >
                   {label}
                 </button>
