@@ -1201,6 +1201,11 @@ a {
   padding: 7px 9px;
 }
 
+.rush-board .track-row__index {
+  font-size: 12px;
+  min-width: 12px;
+}
+
 .rush-board .track-row__art {
   width: 43px;
   height: 43px;
@@ -1247,6 +1252,16 @@ a {
   background: var(--ink-2);
 }
 
+.track-row__index {
+  flex: none;
+  min-width: 14px;
+  font-size: 13px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  text-align: right;
+}
+
 .track-row__art {
   width: 46px;
   height: 46px;
@@ -1270,6 +1285,12 @@ a {
   border-color: var(--t-none-line);
   color: var(--t-none-text);
   opacity: 1;
+}
+
+.track-row--correct .track-row__index,
+.track-row--wrong .track-row__index {
+  color: inherit;
+  opacity: 0.7;
 }
 
 /* Stands in for the album art on the row that was just tapped. */

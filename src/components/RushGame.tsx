@@ -691,7 +691,7 @@ export default function RushGame({ code, closing, onClose, onBack }: Props) {
       {error && <p className="notice notice--error">{error}</p>}
 
       <div className="rush-board">
-        {(frozen ?? rush.options).map((option) => {
+        {(frozen ?? rush.options).map((option, index) => {
           const hit = flash?.trackId === option.spotifyId ? flash.kind : null;
           return (
           <button
@@ -700,6 +700,9 @@ export default function RushGame({ code, closing, onClose, onBack }: Props) {
             onClick={() => guess(option.spotifyId)}
             disabled={frozen !== null}
           >
+            <span className="track-row__index" aria-hidden>
+              {index + 1}
+            </span>
             {hit ? (
               <span className="track-row__art track-row__verdict" aria-hidden>
                 {hit === 'correct' ? '+1' : '−1'}
