@@ -82,6 +82,18 @@ export default function RushGame({ code, closing, onClose, onBack }: Props) {
   const clockOffset = useRef(0);
   /** Held so a fast second guess restarts the bump rather than inheriting the first one's timer. */
   const bonusTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Held so unmounting mid-verdict doesn't leave the freeze timer running. */
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /**
+   * The board is closed from the moment a row is tapped until the verdict
+   * clears. `busy` can't carry this on its own: it is state, so a second tap
+   * in the same frame still sees the old `false`, and it goes back to `false`
+   * as soon as the response lands — while the board is still frozen on the
+   * previous song's options for the verdict flash. Either way the second tap
+   * posts a track id the server has already moved past, and the run gets an
+   * error about a song that isn't on the board.
+   */
+  const guessLock = useRef(false);
   /**
    * Both sources a deal can carry: the YouTube art track, played from the top,
    * and the preview clip it falls back to. See hooks/useRushPlayer.ts.
@@ -138,6 +150,7 @@ export default function RushGame({ code, closing, onClose, onBack }: Props) {
       alive = false;
       stopSong();
       if (bonusTimer.current) clearTimeout(bonusTimer.current);
+      if (flashTimer.current) clearTimeout(flashTimer.current);
     };
   }, [code, stopSong, applyRush]);
 
@@ -239,7 +252,8 @@ export default function RushGame({ code, closing, onClose, onBack }: Props) {
 
   const guess = useCallback(
     async (trackId: string) => {
-      if (busy || !rush || phase !== 'playing') return;
+      if (guessLock.current || busy || !rush || phase !== 'playing') return;
+      guessLock.current = true;
       setBusy(true);
       setError(null);
       try {
@@ -250,9 +264,13 @@ export default function RushGame({ code, closing, onClose, onBack }: Props) {
         const hit = next.score > rush.score;
         setFlash({ trackId, kind: hit ? 'correct' : 'wrong' });
         setFrozen(rush.options);
-        setTimeout(() => {
+        if (flashTimer.current) clearTimeout(flashTimer.current);
+        flashTimer.current = setTimeout(() => {
           setFlash(null);
           setFrozen(null);
+          // Reopened only now: until the fresh options are on screen, any tap
+          // would be aimed at the song that just left.
+          guessLock.current = false;
         }, 550);
 
         // Only when there is a clock to have been extended: an endless run
@@ -275,6 +293,7 @@ export default function RushGame({ code, closing, onClose, onBack }: Props) {
       } catch (err) {
         // A tap that landed after the deadline: the run really is over, so show
         // the summary rather than blaming the player's last click.
+        guessLock.current = false;
         if (err instanceof ApiError && err.status === 409) {
           await finishFromServer();
           return;
@@ -317,6 +336,12 @@ export default function RushGame({ code, closing, onClose, onBack }: Props) {
       setBest(null);
       setNewBest(false);
       setBonus(false);
+      // A run that ended on a guess leaves the board locked behind its last
+      // verdict; the new one opens on a fresh deal, so clear it here too.
+      if (flashTimer.current) clearTimeout(flashTimer.current);
+      setFlash(null);
+      setFrozen(null);
+      guessLock.current = false;
       // The blocked flag clears itself on the next run's unlock, and the chip
       // it drives only renders while playing — nothing to reset here.
       applyRush(next);
@@ -463,7 +488,7 @@ export default function RushGame({ code, closing, onClose, onBack }: Props) {
             key={option.spotifyId}
             className={`track-row${hit ? ` track-row--${hit}` : ''}`}
             onClick={() => guess(option.spotifyId)}
-            disabled={busy}
+            disabled={busy || frozen !== null}
           >
             {hit ? (
               <span className="track-row__art track-row__verdict" aria-hidden>

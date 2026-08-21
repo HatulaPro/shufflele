@@ -342,6 +342,24 @@ export async function warmNextRushSong(code: string): Promise<void> {
   }
 }
 
+/**
+ * Files the song still on air as a miss. The clock can expire (or the player
+ * can quit) with a song dealt and unguessed, and that song never passed
+ * through the guess route — without this it vanishes from the finish screen's
+ * missed list entirely. No life is charged: the run is over either way.
+ *
+ * Idempotent, and a no-op once the board is cleared, so a second finish call
+ * can't file the same song twice.
+ */
+export function recordUnguessedRushSong(state: RushState): void {
+  if (!state.secret?.spotifyId) return;
+  state.history.push({ song: rushSongRef(state.secret), correct: false });
+  state.secret = {} as Track;
+  state.previewUrl = null;
+  state.videoId = null;
+  state.options = [];
+}
+
 /** The client never learns which option is the answer — see the guess route. */
 function publicOptions(state: RushState): RushOption[] {
   return state.options.map((t) => ({
