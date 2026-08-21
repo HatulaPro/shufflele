@@ -2,6 +2,7 @@ import { after } from 'next/server';
 import type { NextRequest, NextResponse } from 'next/server';
 import { fail, json } from '@/lib/http';
 import { requireHost, saveLobby, settleRoster } from '@/lib/lobby';
+import { claimRushStart, consumeRushCredit, refundRushCredit } from '@/lib/ratelimit';
 import {
   MIN_RUSH_POOL,
   dealRushSong,
@@ -17,8 +18,13 @@ export const dynamic = 'force-dynamic';
 type Ctx = { params: Promise<{ code: string }> };
 
 /**
- * Starts (or restarts) the Rush game. No GPU time is spent, so the daily
- * classic-mode cap doesn't apply — a Rush game costs iTunes lookups only.
+ * Starts (or restarts) the Rush game. No GPU time is spent, so the classic
+ * mode's daily cap doesn't apply — but Rush has two limits of its own, for a
+ * different reason. Every song dealt is an iTunes lookup plus an undocumented
+ * YouTube Music search, and what those can cost is the deployment's standing
+ * with endpoints it does not own. So: a short per-lobby cooldown, which is the
+ * one that actually stops a start-and-abandon loop, and a deliberately roomy
+ * daily counter behind it as a circuit breaker (lib/ratelimit.ts).
  *
  * `timeControl` arrives as seconds; 0 means infinite. The clock itself doesn't
  * start here: the begin route stamps it once the first song is audible.
@@ -28,6 +34,12 @@ export async function POST(req: NextRequest, ctx: Ctx): Promise<NextResponse> {
   const auth = await requireHost(code);
   if (!auth.ok) return fail(auth.error, auth.status);
   const lobby = auth.lobby;
+
+  // Before anything is read or dealt: a caller in a loop should cost one Redis
+  // round trip, not a roster settle and a pair of outbound lookups.
+  if (!(await claimRushStart(code))) {
+    return fail('That was quick — give it a few seconds before starting another run.', 429);
+  }
 
   if ((lobby.mode ?? 'classic') !== 'rush') {
     return fail('This lobby was created for the classic game.', 409);
@@ -41,10 +53,10 @@ export async function POST(req: NextRequest, ctx: Ctx): Promise<NextResponse> {
   }
 
   const raw = typeof body.timeControl === 'number' ? body.timeControl : NaN;
-  if (raw !== 0 && raw !== 30 && raw !== 60) {
-    return fail('Pick a time control: 30 seconds, a minute, or infinite.', 400);
+  if (raw !== 0 && raw !== 60 && raw !== 120) {
+    return fail('Pick a time control: one minute, two minutes, or infinite.', 400);
   }
-  const timeControl: RushTimeControl = raw === 0 ? null : (raw as 30 | 60);
+  const timeControl: RushTimeControl = raw === 0 ? null : (raw as 60 | 120);
 
   const pool = await settleRoster(lobby, Math.max(lobby.currentRound, 1));
   if (pool.length === 0) {
@@ -61,12 +73,24 @@ export async function POST(req: NextRequest, ctx: Ctx): Promise<NextResponse> {
     );
   }
 
+  // Charged here rather than at the top: everything above rejects without
+  // spending a lookup, and a malformed body shouldn't eat the day's budget.
+  const credit = await consumeRushCredit();
+  if (!credit.allowed) {
+    return fail(
+      `Rush has hit its limit of ${credit.limit} games for today. It resets at midnight UTC.`,
+      429,
+    );
+  }
+
   const rush = freshRush(timeControl);
   const dealt = await dealRushSong(rush, pool, lobby.unusableTrackIds);
   for (const id of dealt.unusable) {
     if (!lobby.unusableTrackIds.includes(id)) lobby.unusableTrackIds.push(id);
   }
   if (!dealt.ok) {
+    // Never got a song on air, so it wasn't a game — hand the credit back.
+    await refundRushCredit();
     return fail(
       "Couldn't find a playable track in that pool — every song we tried is missing a preview.",
       503,

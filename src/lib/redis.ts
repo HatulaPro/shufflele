@@ -53,6 +53,13 @@ export const YT_VIDEO_TTL_SECONDS = 30 * 24 * 60 * 60;
  */
 export const YT_VIDEO_MISS_TTL_SECONDS = 12 * 60 * 60;
 
+/**
+ * How long one lobby must wait between Rush starts. Long enough that a script
+ * POSTing `/rush/start` in a loop can't hold the outbound lookups open, short
+ * enough that a host restarting a run after a bad first song never feels it.
+ */
+export const RUSH_START_COOLDOWN_SECONDS = 5;
+
 export const keys = {
   lobby: (code: string) => `lobby:${code}`,
   tracks: (code: string) => `lobby:${code}:tracks`,
@@ -60,6 +67,10 @@ export const keys = {
   /** NX guard so one round slot never buys two separations. See lib/prefetch.ts. */
   prefetchLock: (code: string, n: number) => `lobby:${code}:round:${n}:prefetch`,
   ratelimit: (day: string) => `ratelimit:games:${day}`,
+  /** Rush's own daily counter — no GPU behind it, so a separate, larger budget. */
+  rushRatelimit: (day: string) => `ratelimit:rush:${day}`,
+  /** NX guard so a restart loop can't deal boards faster than a person plays. */
+  rushStartLock: (code: string) => `lobby:${code}:rush:start`,
   playlist: (playlistId: string) => `cache:playlist:${playlistId}`,
   /** Spotify id to YouTube art-track id, for Rush's from-the-top playback. */
   ytVideo: (spotifyId: string) => `cache:yt:${spotifyId}`,

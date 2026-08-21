@@ -1,8 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRushPlayer } from '@/hooks/useRushPlayer';
 import { api } from '@/lib/client';
+import { RUSH_BONUS_MS } from '@/lib/types';
 import type { PublicRush, RushSongRef } from '@/lib/types';
 
 type Props = {
@@ -18,9 +19,18 @@ type Phase = 'loading' | 'ready' | 'countdown' | 'playing' | 'over';
 const COUNT_STEPS = ['3', '2', '1', 'Go!'] as const;
 /** How long each ready-set-go beat stays up. Long enough to read, short enough to feel quick. */
 const COUNT_MS = 650;
+/** How long the correct-guess time bonus stays up beside the score. */
+const BONUS_MS = 900;
+const BONUS_SECONDS = RUSH_BONUS_MS / 1000;
 
 function bestKey(timeControl: PublicRush['timeControl']): string {
   return `shufflele:rush-best-${timeControl ?? 'inf'}`;
+}
+
+/** "1 min" / "2 min" for the labels the run wears on the ready and finish screens. */
+function formatTimeControl(timeControl: PublicRush['timeControl']): string {
+  if (timeControl === null) return 'Endless clock';
+  return timeControl === 60 ? '1 minute' : `${timeControl / 60} minutes`;
 }
 
 function formatClock(ms: number): string {
@@ -44,6 +54,28 @@ export default function RushGame({ code, closing, onClose, onBack }: Props) {
   const [countStep, setCountStep] = useState(0);
   const [best, setBest] = useState<number | null>(null);
   const [newBest, setNewBest] = useState(false);
+  /** Set on a correct guess so the clock bonus is visible; clears itself. */
+  const [bonus, setBonus] = useState(false);
+  /**
+   * Server clock minus this device's clock. `endsAt` is stamped in server
+   * time, so counting down against a raw `Date.now()` is wrong by whatever the
+   * device clock is off by — which on a phone with a hand-set clock is not
+   * small. Every response carries the server's `now`, so the difference is
+   * free to measure and is re-measured on each one.
+   *
+   * A ref, not state: the clock effect below re-arms on `endsAt`, and making
+   * this a dependency would tear the interval down on every response for a
+   * value that only ever nudges. Reading `.current` inside the tick picks up
+   * the latest either way.
+   *
+   * The reading is biased by however long the response took to arrive, which
+   * makes the measured offset slightly too small and the countdown finish a
+   * hair early — the safe direction, and the server is the authority on expiry
+   * regardless.
+   */
+  const clockOffset = useRef(0);
+  /** Held so a fast second guess restarts the bump rather than inheriting the first one's timer. */
+  const bonusTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /**
    * Both sources a deal can carry: the YouTube art track, played from the top,
    * and the preview clip it falls back to. See hooks/useRushPlayer.ts.
@@ -55,6 +87,15 @@ export default function RushGame({ code, closing, onClose, onBack }: Props) {
     unlock,
   } = useRushPlayer();
 
+  /** Every server response, in one place, so the clock offset can't drift unmeasured. */
+  const applyRush = useCallback((next: PublicRush) => {
+    clockOffset.current = next.now - Date.now();
+    setRush(next);
+  }, []);
+
+  /** Now, in server time. What every deadline comparison here runs off. */
+  const serverNow = useCallback(() => Date.now() + clockOffset.current, []);
+
   // Fetch wherever the run stands. A finished game lands straight on the
   // finish screen — a refresh there must not lose the summary.
   useEffect(() => {
@@ -62,7 +103,7 @@ export default function RushGame({ code, closing, onClose, onBack }: Props) {
     api<PublicRush>(`/api/lobby/${code}/rush`)
       .then((next) => {
         if (!alive) return;
-        setRush(next);
+        applyRush(next);
         setPhase(next.over ? 'over' : 'ready');
       })
       .catch((err: unknown) =>
@@ -71,8 +112,9 @@ export default function RushGame({ code, closing, onClose, onBack }: Props) {
     return () => {
       alive = false;
       stopSong();
+      if (bonusTimer.current) clearTimeout(bonusTimer.current);
     };
-  }, [code, stopSong]);
+  }, [code, stopSong, applyRush]);
 
   // High score lives in localStorage, per time control — this phone's best,
   // which is the only scoreboard a solo sprint needs.
@@ -87,21 +129,22 @@ export default function RushGame({ code, closing, onClose, onBack }: Props) {
     setBest(Math.max(prev, rush.score));
   }, [phase, rush, best]);
 
-  // The clock. Derived from the server's deadline, so a refresh doesn't buy
-  // extra time.
+  // The clock. Derived from the server's deadline and read in server time, so
+  // neither a refresh nor a skewed device clock buys extra time. Re-arms
+  // whenever `endsAt` moves, which a correct guess makes it do.
   useEffect(() => {
     if (phase !== 'playing' || rush?.endsAt == null) return;
     let alive = true;
 
     const tick = async () => {
-      const left = rush.endsAt! - Date.now();
+      const left = rush.endsAt! - serverNow();
       if (!alive) return;
       if (left <= 0) {
         try {
           const next = await api<PublicRush>(`/api/lobby/${code}/rush/finish`, { method: 'POST' });
           if (!alive) return;
           stopSong();
-          setRush(next);
+          applyRush(next);
           setPhase('over');
         } catch {
           if (alive) setPhase('over');
@@ -117,30 +160,39 @@ export default function RushGame({ code, closing, onClose, onBack }: Props) {
       alive = false;
       clearInterval(timer);
     };
-  }, [phase, rush?.endsAt, code, stopSong]);
+  }, [phase, rush?.endsAt, code, stopSong, serverNow, applyRush]);
 
   const videoId = rush?.videoId ?? null;
   const previewUrl = rush?.previewUrl ?? null;
 
   /**
    * Song on, clock on. The server stamps the deadline here rather than at deal
-   * time, so the ready screen and the countdown come out of nobody's 30
-   * seconds; the response carries the `endsAt` the clock below runs off.
+   * time, so the ready screen and the countdown come out of nobody's
+   * clock; the response carries the `endsAt` the clock below runs off.
    */
   const startPlaying = useCallback(async () => {
     setPhase('playing');
     playSong({ videoId, previewUrl });
     try {
       const next = await api<PublicRush>(`/api/lobby/${code}/rush/begin`, { method: 'POST' });
-      setRush(next);
+      applyRush(next);
     } catch (err) {
+      // No stamped deadline means no clock: the effect below never arms, and
+      // the server never expires the run either, so playing on would hand out
+      // an unbounded run. The run stops here instead and re-arms
+      // from the ready screen. `begin` is idempotent, so if it was only the
+      // response that went missing, the retry picks the run up on the deadline
+      // it already has — including one that has since run out.
+      stopSong();
+      setCountStep(0);
+      setPhase('ready');
       setError(err instanceof Error ? err.message : 'Could not start the clock.');
     }
     // Depends on the two source fields rather than on `rush` itself: the
     // countdown effect below re-runs whenever this identity changes, and
     // `setRush` above would otherwise hand it a new object and start the song
     // over on a loop. `begin` returns the same song, so both stay put.
-  }, [videoId, previewUrl, playSong, code]);
+  }, [videoId, previewUrl, playSong, stopSong, code, applyRush]);
 
   // Ready-set-go. Runs off a single chain of timeouts so the beats can't drift.
   useEffect(() => {
@@ -158,6 +210,7 @@ export default function RushGame({ code, closing, onClose, onBack }: Props) {
     // ends we are three timeouts away from a user gesture, and both backends
     // need one. Nothing is audible until "Go!".
     unlock({ videoId, previewUrl });
+    setError(null);
     setCountStep(0);
     setPhase('countdown');
   };
@@ -176,12 +229,20 @@ export default function RushGame({ code, closing, onClose, onBack }: Props) {
         setFlash(hit ? 'correct' : 'wrong');
         setTimeout(() => setFlash(null), 550);
 
+        // Only when there is a clock to have been extended: an endless run
+        // scores the same but has no deadline, so a "+2s" there would be a lie.
+        if (hit && next.endsAt !== null) {
+          if (bonusTimer.current) clearTimeout(bonusTimer.current);
+          setBonus(true);
+          bonusTimer.current = setTimeout(() => setBonus(false), BONUS_MS);
+        }
+
         if (next.over) {
           stopSong();
-          setRush(next);
+          applyRush(next);
           setPhase('over');
         } else {
-          setRush(next);
+          applyRush(next);
           playSong(next);
         }
       } catch (err) {
@@ -190,8 +251,25 @@ export default function RushGame({ code, closing, onClose, onBack }: Props) {
         setBusy(false);
       }
     },
-    [busy, rush, phase, code, playSong, stopSong],
+    [busy, rush, phase, code, playSong, stopSong, applyRush],
   );
+
+  /**
+   * Back to the lobby, and the run goes with it. The host screen resumes from
+   * the lobby's `rushActive` flag, which is only "a rush game exists" — so a
+   * spent run left in place means every later refresh landing back on this
+   * same summary with no way out. Clearing it server-side is what makes the
+   * exit stick; up until this button, a refresh still restores the summary.
+   */
+  const backToLobby = useCallback(async () => {
+    try {
+      await api(`/api/lobby/${code}/rush`, { method: 'DELETE' });
+    } catch {
+      // Best-effort. The run is already over and the screen is leaving either
+      // way; the only cost is that a refresh could still land back here.
+    }
+    onBack();
+  }, [code, onBack]);
 
   /** Restart with the same time control — the start route resets everything. */
   const playAgain = async () => {
@@ -205,9 +283,10 @@ export default function RushGame({ code, closing, onClose, onBack }: Props) {
       });
       setBest(null);
       setNewBest(false);
+      setBonus(false);
       // The blocked flag clears itself on the next run's unlock, and the chip
       // it drives only renders while playing — nothing to reset here.
-      setRush(next);
+      applyRush(next);
       setPhase('ready');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not start a new run.');
@@ -250,7 +329,7 @@ export default function RushGame({ code, closing, onClose, onBack }: Props) {
         closing={closing}
         onPlayAgain={playAgain}
         onClose={onClose}
-        onBack={onBack}
+        onBack={backToLobby}
       />
     );
   }
@@ -263,11 +342,10 @@ export default function RushGame({ code, closing, onClose, onBack }: Props) {
         <div className="rush-arm stack">
           <h1 className="wordmark wordmark--sm">shufflele rush</h1>
           <p className="muted">
-            Songs play from the top. Click the one that&rsquo;s playing — misses cost a heart.
+            Songs play from the top. Click the one that&rsquo;s playing — misses cost a life.
           </p>
           <span className="chip chip--accent">
-            {rush.timeControl === null ? 'Endless clock' : `${rush.timeControl} seconds`} ·{' '}
-            {rush.maxLives} hearts
+            {formatTimeControl(rush.timeControl)} · {rush.maxLives} lives
           </span>
 
           {phase === 'countdown' ? (
@@ -297,6 +375,11 @@ export default function RushGame({ code, closing, onClose, onBack }: Props) {
   // --- playing -------------------------------------------------------------
 
   const infinite = rush.timeControl === null;
+  const msLeft =
+    remaining ??
+    (rush.endsAt !== null ? rush.endsAt - serverNow() : (rush.timeControl ?? 0) * 1000);
+  /** Last ten seconds get the pulse — the clock is the thing you must not miss. */
+  const urgent = !infinite && msLeft <= 10_000;
 
   return (
     <main className="shell">
@@ -311,18 +394,23 @@ export default function RushGame({ code, closing, onClose, onBack }: Props) {
               ▶ Play
             </button>
           )}
-          <span className={`chip ${infinite ? '' : 'chip--accent'} rush-clock`}>
-            {infinite
-              ? '∞'
-              : formatClock(
-                  remaining ??
-                    (rush.endsAt !== null
-                      ? rush.endsAt - Date.now()
-                      : (rush.timeControl ?? 0) * 1000),
-                )}
+          <span
+            className={`rush-clock ${infinite ? 'rush-clock--inf' : ''} ${
+              urgent ? 'rush-clock--urgent' : ''
+            }`}
+            aria-label="Time left"
+          >
+            {infinite ? '∞' : formatClock(msLeft)}
           </span>
-          <span className="chip">{rush.score}</span>
-          <span className="hearts" aria-label={`${rush.lives} of ${rush.maxLives} hearts left`}>
+          <span className="rush-score">
+            <span className="chip">{rush.score}</span>
+            {bonus && (
+              <span key={rush.score} className="rush-bonus" aria-hidden>
+                +{BONUS_SECONDS}s
+              </span>
+            )}
+          </span>
+          <span className="hearts" aria-label={`${rush.lives} of ${rush.maxLives} lives left`}>
             {Array.from({ length: rush.maxLives }, (_, i) => (
               <span key={i} className={`heart ${i < rush.lives ? '' : 'heart--lost'}`}>
                 ♥
@@ -334,7 +422,7 @@ export default function RushGame({ code, closing, onClose, onBack }: Props) {
 
       {flash && (
         <div key={`${flash}-${rush.score}-${rush.lives}`} className={`rush-flash rush-flash--${flash}`}>
-          {flash === 'correct' ? '+1' : '−1 heart'}
+          {flash === 'correct' ? '+1' : '−1 life'}
         </div>
       )}
 
@@ -420,7 +508,7 @@ function FinishScreen({
       <div className="row-between">
         <h1 className="wordmark wordmark--sm">shufflele rush</h1>
         <span className="chip">
-          {rush.timeControl === null ? '∞' : `${rush.timeControl}s`} run
+          {rush.timeControl === null ? '∞' : formatTimeControl(rush.timeControl)} run
         </span>
       </div>
 
@@ -440,14 +528,21 @@ function FinishScreen({
       {error && <p className="notice notice--error">{error}</p>}
 
       <div className="stack stack--tight">
-        {(summary.correct.length > 0 || summary.wrong.length > 0) && (
-          <>
-            <SongList songs={summary.correct} tone="good" />
-            <SongList songs={summary.wrong} tone="bad" />
-          </>
-        )}
-        {summary.correct.length === 0 && summary.wrong.length === 0 && (
+        {summary.correct.length === 0 && summary.wrong.length === 0 ? (
           <p className="empty">Not a single song — the clock was ruthless.</p>
+        ) : (
+          <>
+            {summary.correct.length > 0 ? (
+              <SongList songs={summary.correct} tone="good" />
+            ) : (
+              <p className="empty">Nothing landed this run — every guess missed.</p>
+            )}
+            {summary.wrong.length > 0 ? (
+              <SongList songs={summary.wrong} tone="bad" />
+            ) : (
+              <p className="empty">A clean run — you didn&rsquo;t miss once.</p>
+            )}
+          </>
         )}
       </div>
 

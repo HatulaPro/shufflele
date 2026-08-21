@@ -25,7 +25,7 @@ export default function HostGame({ code }: { code: string }) {
   const [removeError, setRemoveError] = useState<string | null>(null);
   const [origin, setOrigin] = useState('');
   /** Rush mode: seconds on the clock, 0 = infinite. A default beats making everyone read three options. */
-  const [timeControl, setTimeControl] = useState<0 | 30 | 60>(60);
+  const [timeControl, setTimeControl] = useState<0 | 60 | 120>(60);
   /** Set once a Rush game exists — covers both starting one and resuming after a refresh. */
   const [rushActive, setRushActive] = useState(false);
   /** The lobby keeps `currentRound` set after a round ends, so the resume below
@@ -238,8 +238,8 @@ export default function HostGame({ code }: { code: string }) {
             <div className="seg" role="radiogroup" aria-label="Time control">
               {(
                 [
-                  [30, '30 sec'],
                   [60, '1 min'],
+                  [120, '2 min'],
                   [0, '∞'],
                 ] as const
               ).map(([value, label]) => (
@@ -247,7 +247,10 @@ export default function HostGame({ code }: { code: string }) {
                   key={value}
                   role="radio"
                   aria-checked={timeControl === value}
-                  className={`seg__btn ${timeControl === value ? 'seg__btn--on' : ''}`}
+                  aria-label={value === 0 ? 'No clock' : undefined}
+                  className={`seg__btn ${value === 0 ? 'seg__btn--inf' : ''} ${
+                    timeControl === value ? 'seg__btn--on' : ''
+                  }`}
                   onClick={() => setTimeControl(value)}
                 >
                   {label}

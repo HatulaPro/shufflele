@@ -314,6 +314,13 @@ the cap it just doesn't run.
 **Rate limiting counts rounds, not lobbies** — `INCR ratelimit:games:{today}`, checked before any
 GPU time is spent, refunded if the round fails to launch. Default 10/day, `GAMES_PER_DAY` to change.
 
+**Rush is limited separately**, because nothing behind it is a GPU bill — a run spends iTunes and
+YouTube Music lookups, and the thing worth protecting is standing with endpoints this app doesn't
+own. Two limits, in that order: a five-second per-lobby cooldown on `POST /rush/start`
+(`SET lobby:{code}:rush:start NX EX 5`), which is what actually stops a start-and-abandon loop
+before it settles a roster or deals a board; and `INCR ratelimit:rush:{today}` behind it as a
+backstop, default 50/day via `RUSH_GAMES_PER_DAY`, refunded when no first song makes it on air.
+
 ## Known limitations
 
 Carried over from the spec, all accepted:

@@ -3,6 +3,7 @@ import type { NextRequest, NextResponse } from 'next/server';
 import { fail, json } from '@/lib/http';
 import { loadTracks, requireHost, saveLobby } from '@/lib/lobby';
 import {
+  awardRushTime,
   dealRushSong,
   rushOver,
   rushSongRef,
@@ -19,8 +20,9 @@ type Ctx = { params: Promise<{ code: string }> };
  * which option is the answer, same rule as the classic mode's guess route,
  * because the host plays on a phone the room can see.
  *
- * Either way the game moves straight on: a hit scores and deals the next song,
- * a miss costs a life and deals the next song. Out of lives ends it here; out
+ * Either way the game moves straight on: a hit scores, buys a couple of
+ * seconds of clock, and deals the next song; a miss costs a life and deals the
+ * next song. Out of lives ends it here; out
  * of clock is the finish route's job. The next song is normally already warm
  * (lib/rush.ts), so this response doesn't spend the player's clock on a lookup.
  */
@@ -52,6 +54,10 @@ export async function POST(req: NextRequest, ctx: Ctx): Promise<NextResponse> {
 
   if (correct) {
     rush.score += 1;
+    // Time is scored server-side off the stored deadline, exactly like the
+    // score: the client posts a track id and nothing else, so there is no
+    // number here it could have supplied.
+    awardRushTime(rush);
   } else {
     rush.lives -= 1;
   }

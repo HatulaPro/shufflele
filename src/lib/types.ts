@@ -185,7 +185,15 @@ export type Round = {
 // Rush game is cheap in exactly the way a classic round is not.
 
 /** Seconds on the clock. Null = infinite. */
-export type RushTimeControl = 30 | 60 | null;
+export type RushTimeControl = 60 | 120 | null;
+
+/**
+ * What a correct guess buys you, in ms. Lives here rather than in lib/rush.ts
+ * because both sides need the number — the server to move the deadline, the
+ * play screen to label the bump beside the score — and lib/rush.ts pulls in
+ * node:crypto and the lobby store, so a client component cannot import from it.
+ */
+export const RUSH_BONUS_MS = 2000;
 
 /** A finished song, as the finish screen lists it. */
 export type RushSongRef = {
@@ -228,7 +236,10 @@ export type RushState = {
    * air. Null until then: a run sitting on the ready screen must not burn clock.
    */
   begunAt: number | null;
-  /** Epoch ms the clock runs out at. Null = infinite, or not begun yet. */
+  /**
+   * Epoch ms the clock runs out at. Null = infinite, or not begun yet. Moves
+   * later on every correct guess — see `awardRushTime` in lib/rush.ts.
+   */
   endsAt: number | null;
   lives: number;
   score: number;
@@ -253,6 +264,13 @@ export type RushState = {
 export type PublicRush = {
   timeControl: RushTimeControl;
   endsAt: number | null;
+  /**
+   * The server's clock at the moment this response was built. `endsAt` is
+   * stamped from the server's clock, so a client that counts down against its
+   * own `Date.now()` is wrong by however far its device clock is off. The
+   * client subtracts this to work in server time instead. See lib/rush.ts.
+   */
+  now: number;
   lives: number;
   maxLives: number;
   score: number;

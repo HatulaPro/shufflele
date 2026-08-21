@@ -4,6 +4,7 @@ import { loadLobby, loadTracks, poolFor, saveLobby } from './lobby';
 import { artistsLabel } from './round';
 import { pickSecret } from './select';
 import { findFullTrackVideo } from './ytmusic';
+import { RUSH_BONUS_MS } from './types';
 import type {
   PublicRush,
   RushDeal,
@@ -72,7 +73,7 @@ export function freshRush(timeControl: RushTimeControl, now = Date.now()): RushS
 /**
  * Starts the clock. Called when the first song actually goes on air, not when
  * the game is dealt — the ready screen and the ready-set-go beats sit between
- * the two, and on a 30-second control that gap is a tenth of the game.
+ * the two, and on a one-minute control that gap is a real slice of it.
  *
  * Idempotent: a refresh mid-run re-arms the same screen and must not push the
  * deadline out.
@@ -81,6 +82,24 @@ export function beginRush(state: RushState, now = Date.now()): void {
   if (state.begunAt !== null) return;
   state.begunAt = now;
   state.endsAt = state.timeControl === null ? null : now + state.timeControl * 1000;
+}
+
+/**
+ * Pushes the deadline out by the correct-guess bonus. Mutates `state`. The
+ * clock is a deadline rather than a tick (see `rushOver`), so a bonus is just a
+ * later deadline — nothing accumulates, and nothing has to be replayed to know
+ * how much time is left.
+ *
+ * A no-op on an infinite control, which has no deadline to push, and on a run
+ * that has not begun — `endsAt` is null in both cases and the bonus would have
+ * nothing to attach to. (A guess before `beginRush` isn't reachable through the
+ * UI, but the rule holds either way: `beginRush` stamps the full control from
+ * the moment the first song goes on air, so time banked before then would be
+ * silently thrown away rather than added.)
+ */
+export function awardRushTime(state: RushState): void {
+  if (state.endsAt === null) return;
+  state.endsAt += RUSH_BONUS_MS;
 }
 
 /** The clock is a deadline, not a tick — expiry is derived, never polled. */
@@ -294,6 +313,10 @@ export function toPublicRush(state: RushState): PublicRush {
   return {
     timeControl: state.timeControl,
     endsAt: state.endsAt,
+    // Stamped as late as possible: the client pairs it with its own clock to
+    // work out the offset between the two, so the less of this request's own
+    // handling sits between the two readings, the smaller the error.
+    now: Date.now(),
     lives: Math.max(0, state.lives),
     maxLives: MAX_RUSH_LIVES,
     score: state.score,
