@@ -17,9 +17,15 @@ export const dynamic = 'force-dynamic';
 type Ctx = { params: Promise<{ code: string }> };
 
 /**
- * Click one of the ten songs. Judged server-side — the client is never told
- * which option is the answer, same rule as the classic mode's guess route,
- * because the host plays on a phone the room can see.
+ * Click one of the eight songs. Judged here, and only here: the score, the
+ * lives and the clock are all set from this route's verdict, and a client that
+ * posted a different one would only be overwritten by the response.
+ *
+ * The client does hold the answer while it plays (`answerId`, lib/types.ts) so
+ * it can paint the verdict on the tap instead of on the response. That gives
+ * away nothing `videoId` had not already given away — the deal names the song's
+ * YouTube master, and always has — and it buys nothing, because nothing the
+ * client believes about a guess survives this handler disagreeing with it.
  *
  * Either way the game moves straight on: a hit scores, buys a couple of
  * seconds of clock, and deals the next song; a miss costs a life and deals the

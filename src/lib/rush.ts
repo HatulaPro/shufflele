@@ -8,6 +8,7 @@ import { RUSH_BONUS_MS } from './types';
 import type {
   Lobby,
   PublicRush,
+  PublicRushDeal,
   RushDeal,
   RushOption,
   RushSongRef,
@@ -360,14 +361,27 @@ export function recordUnguessedRushSong(state: RushState): void {
   state.options = [];
 }
 
-/** The client never learns which option is the answer — see the guess route. */
-function publicOptions(state: RushState): RushOption[] {
-  return state.options.map((t) => ({
-    spotifyId: t.spotifyId,
-    title: t.title,
-    artist: artistsLabel(t),
-    albumArt: t.albumArt,
-  }));
+function publicOption(track: Track): RushOption {
+  return {
+    spotifyId: track.spotifyId,
+    title: track.title,
+    artist: artistsLabel(track),
+    albumArt: track.albumArt,
+  };
+}
+
+/**
+ * A warmed deal, ready for the client to put on air itself. Carries the answer
+ * for the same reason the song on air does — see `answerId` in lib/types.ts —
+ * and the server re-judges the guess regardless.
+ */
+function publicDeal(deal: RushDeal): PublicRushDeal {
+  return {
+    answerId: deal.secret.spotifyId,
+    previewUrl: deal.previewUrl,
+    videoId: deal.videoId,
+    options: deal.options.map(publicOption),
+  };
 }
 
 /**
@@ -397,7 +411,11 @@ export function toPublicRush(state: RushState): PublicRush {
     over,
     previewUrl: over ? null : state.previewUrl,
     videoId: over ? null : state.videoId,
-    options: over ? [] : publicOptions(state),
+    options: over ? [] : state.options.map(publicOption),
+    answerId: over ? null : (state.secret?.spotifyId ?? null),
+    // Withheld once the run is over: the finish screen has no board to play,
+    // and a spent run shouldn't leave a song queued in the client.
+    next: over || !state.next ? null : publicDeal(state.next),
     summary,
   };
 }

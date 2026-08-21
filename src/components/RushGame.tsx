@@ -21,6 +21,16 @@ const COUNT_STEPS = ['3', '2', '1', 'Go!'] as const;
 const COUNT_MS = 650;
 /** How long the correct-guess time bonus stays up beside the score. */
 const BONUS_MS = 900;
+/** How long a verdict holds the board on the song that was just guessed. */
+const FLASH_MS = 550;
+/**
+ * The warm-up runs after the guess response is sent, so the deal for the song
+ * after this one lands a moment later. These control the poll that picks it
+ * up: often enough that it is in hand well before the next guess, and capped
+ * so a run that the server has stopped warming doesn't poll forever.
+ */
+const WARM_POLL_MS = 600;
+const WARM_TRIES = 5;
 const BONUS_SECONDS = RUSH_BONUS_MS / 1000;
 
 function bestKey(timeControl: PublicRush['timeControl']): string {
@@ -40,9 +50,21 @@ function formatClock(ms: number): string {
 
 /**
  * The beat-the-clock mode's whole run: arm it, play songs from t=0, click the
- * one that's on. The server judges every click and deals the next song in the
- * same response, so there is no polling here at all — the only thing this
- * component watches is its own clock.
+ * one that's on.
+ *
+ * A guess resolves locally and immediately. Every response carries `answerId`
+ * for the song on air and, once the background warm-up has landed, the whole
+ * `next` deal — so a tap paints its verdict and starts the following song in
+ * the same frame, instead of after a round trip that on mobile data is most of
+ * a second. The POST still goes out, the server still judges it, and its
+ * numbers overwrite the optimistic ones when they arrive; the client is only
+ * ever guessing at what it already knows the server will say.
+ *
+ * Two things follow from that. Guesses are posted in a chain rather than
+ * concurrently, because the server validates each one against the board it
+ * currently holds and would reject a guess for a song it hasn't reached yet.
+ * And when a response disagrees with what we played — no warm deal was in
+ * hand, or the run diverged — the server's version wins and goes on air.
  */
 export default function RushGame({ code, closing, onClose, onBack }: Props) {
   const [phase, setPhase] = useState<Phase>('loading');
@@ -95,6 +117,30 @@ export default function RushGame({ code, closing, onClose, onBack }: Props) {
    */
   const guessLock = useRef(false);
   /**
+   * The run as last committed, readable synchronously. A guess advances the
+   * board optimistically and then reconciles against a response that arrives
+   * one or more state updates later — by which point the `rush` its closure
+   * captured is stale. Written by `commit` alongside every `setRush`.
+   */
+  const rushRef = useRef<PublicRush | null>(null);
+  /**
+   * Guesses post one after another, never in parallel. The server judges each
+   * against the board it holds right now, so a second guess that overtook the
+   * first would be a track id for a song the server hasn't dealt yet — a 400
+   * mid-run, on a tap that was perfectly legitimate.
+   */
+  const postChain = useRef<Promise<void>>(Promise.resolve());
+  /**
+   * The guess in flight had no warmed deal behind it, so the board it is
+   * frozen on is the only one we have: the next song exists nowhere on this
+   * client until the response arrives. The verdict freeze must not expire into
+   * a board the server has already moved past — a tap on it would post a track
+   * id for the previous song and be rejected. Released by whichever of the two
+   * finishes last, which is what `flashDone` is for.
+   */
+  const awaitingDeal = useRef(false);
+  const flashDone = useRef(true);
+  /**
    * Both sources a deal can carry: the YouTube art track, played from the top,
    * and the preview clip it falls back to. See hooks/useRushPlayer.ts.
    */
@@ -105,11 +151,27 @@ export default function RushGame({ code, closing, onClose, onBack }: Props) {
     unlock,
   } = useRushPlayer();
 
-  /** Every server response, in one place, so the clock offset can't drift unmeasured. */
-  const applyRush = useCallback((next: PublicRush) => {
-    clockOffset.current = next.now - Date.now();
+  /** Every write to the run, so `rushRef` can't fall behind the state. */
+  const commit = useCallback((update: PublicRush | ((prev: PublicRush) => PublicRush)) => {
+    const next =
+      typeof update === 'function'
+        ? rushRef.current
+          ? update(rushRef.current)
+          : null
+        : update;
+    if (!next) return;
+    rushRef.current = next;
     setRush(next);
   }, []);
+
+  /** Every server response, in one place, so the clock offset can't drift unmeasured. */
+  const applyRush = useCallback(
+    (next: PublicRush) => {
+      clockOffset.current = next.now - Date.now();
+      commit(next);
+    },
+    [commit],
+  );
 
   /** Now, in server time. What every deadline comparison here runs off. */
   const serverNow = useCallback(() => Date.now() + clockOffset.current, []);
@@ -250,61 +312,207 @@ export default function RushGame({ code, closing, onClose, onBack }: Props) {
     setPhase('countdown');
   };
 
-  const guess = useCallback(
-    async (trackId: string) => {
-      if (guessLock.current || busy || !rush || phase !== 'playing') return;
-      guessLock.current = true;
-      setBusy(true);
-      setError(null);
-      try {
-        const next = await api<PublicRush>(`/api/lobby/${code}/rush/guess`, {
-          method: 'POST',
-          body: JSON.stringify({ trackId }),
-        });
-        const hit = next.score > rush.score;
-        setFlash({ trackId, kind: hit ? 'correct' : 'wrong' });
-        setFrozen(rush.options);
-        if (flashTimer.current) clearTimeout(flashTimer.current);
-        flashTimer.current = setTimeout(() => {
-          setFlash(null);
-          setFrozen(null);
-          // Reopened only now: until the fresh options are on screen, any tap
-          // would be aimed at the song that just left.
-          guessLock.current = false;
-        }, 550);
-
-        // Only when there is a clock to have been extended: an endless run
-        // scores the same but has no deadline, so a "+2s" there would be a lie.
-        if (hit && next.endsAt !== null) {
-          if (bonusTimer.current) clearTimeout(bonusTimer.current);
-          setBonus(true);
-          bonusTimer.current = setTimeout(() => setBonus(false), BONUS_MS);
-        }
-
-        if (next.over) {
-          stopSong();
-          setError(null);
-          applyRush(next);
-          setPhase('over');
-        } else {
-          applyRush(next);
-          playSong(next);
-        }
-      } catch (err) {
-        // A tap that landed after the deadline: the run really is over, so show
-        // the summary rather than blaming the player's last click.
-        guessLock.current = false;
-        if (err instanceof ApiError && err.status === 409) {
-          await finishFromServer();
-          return;
-        }
-        setError(err instanceof Error ? err.message : 'That guess did not go through.');
-      } finally {
-        setBusy(false);
+  /**
+   * The client and the server disagree about what is on air — a guess that
+   * never landed, mostly. The server is the authority, so its board goes on
+   * air and the local one is discarded rather than played on top of.
+   */
+  const resync = useCallback(async () => {
+    try {
+      const snapshot = await api<PublicRush>(`/api/lobby/${code}/rush`);
+      if (snapshot.over) {
+        stopSong();
+        applyRush(snapshot);
+        setPhase('over');
+        return;
       }
+      applyRush(snapshot);
+      playSong({ videoId: snapshot.videoId, previewUrl: snapshot.previewUrl });
+    } catch {
+      // Nothing better to fall back to; the board stays where it is and the
+      // error already on screen explains why the run stalled.
+    }
+  }, [code, applyRush, playSong, stopSong]);
+
+  /** Verdict over, board live again. */
+  const releaseBoard = useCallback(() => {
+    setFlash(null);
+    setFrozen(null);
+    guessLock.current = false;
+  }, []);
+
+  /**
+   * A response landed with the next board in it. If the verdict flash has
+   * already had its time, the board opens now; otherwise the flash timer opens
+   * it, so a fast response never cuts the verdict short.
+   */
+  const settleDeal = useCallback(() => {
+    if (!awaitingDeal.current) return;
+    awaitingDeal.current = false;
+    if (flashDone.current) releaseBoard();
+  }, [releaseBoard]);
+
+  /**
+   * Judge the tap, pay it out, and move the run on — all before the network
+   * hears about it. `answerId` is the same answer the server is about to
+   * apply, so the optimistic score, life and clock below are a prediction only
+   * in the technical sense; the response overwrites them regardless.
+   */
+  const guess = useCallback(
+    (trackId: string) => {
+      if (guessLock.current || !rush || phase !== 'playing') return;
+      guessLock.current = true;
+      flashDone.current = false;
+      setError(null);
+
+      const hit = trackId === rush.answerId;
+      setFlash({ trackId, kind: hit ? 'correct' : 'wrong' });
+      setFrozen(rush.options);
+      if (flashTimer.current) clearTimeout(flashTimer.current);
+      flashTimer.current = setTimeout(() => {
+        flashDone.current = true;
+        // Reopened only once the fresh options are on screen: until then any
+        // tap would be aimed at the song that just left.
+        if (!awaitingDeal.current) releaseBoard();
+      }, FLASH_MS);
+
+      // Only when there is a clock to have been extended: an endless run
+      // scores the same but has no deadline, so a "+2s" there would be a lie.
+      if (hit && rush.endsAt !== null) {
+        if (bonusTimer.current) clearTimeout(bonusTimer.current);
+        setBonus(true);
+        bonusTimer.current = setTimeout(() => setBonus(false), BONUS_MS);
+      }
+
+      // The last life spent ends the run, and the finish screen is the
+      // server's to hand over — so no song goes on air on the way there.
+      const queued = hit || rush.lives > 1 ? rush.next : null;
+      awaitingDeal.current = queued === null;
+      commit((prev) => ({
+        ...prev,
+        score: hit ? prev.score + 1 : prev.score,
+        lives: hit ? prev.lives : Math.max(0, prev.lives - 1),
+        endsAt: hit && prev.endsAt !== null ? prev.endsAt + RUSH_BONUS_MS : prev.endsAt,
+        ...(queued
+          ? {
+              answerId: queued.answerId,
+              options: queued.options,
+              videoId: queued.videoId,
+              previewUrl: queued.previewUrl,
+              // Spent. The poll below fetches the one after it.
+              next: null,
+            }
+          : {}),
+      }));
+      if (queued) playSong({ videoId: queued.videoId, previewUrl: queued.previewUrl });
+
+      postChain.current = postChain.current.then(async () => {
+        try {
+          const next = await api<PublicRush>(`/api/lobby/${code}/rush/guess`, {
+            method: 'POST',
+            body: JSON.stringify({ trackId }),
+          });
+
+          if (next.over) {
+            stopSong();
+            setError(null);
+            awaitingDeal.current = false;
+            applyRush(next);
+            setPhase('over');
+            return;
+          }
+
+          clockOffset.current = next.now - Date.now();
+          const current = rushRef.current;
+          if (!current || current.answerId !== next.answerId) {
+            // Either nothing was warm and this response is the first we have
+            // heard of the next song, or the two sides drifted. The server's
+            // board is the real one either way.
+            applyRush(next);
+            playSong({ videoId: next.videoId, previewUrl: next.previewUrl });
+            settleDeal();
+            return;
+          }
+          // Same song on air on both sides: keep the board that is already
+          // painted and take the numbers, which are the server's to set.
+          commit((prev) => ({
+            ...prev,
+            now: next.now,
+            score: next.score,
+            lives: next.lives,
+            endsAt: next.endsAt,
+            next: prev.next ?? next.next,
+          }));
+          settleDeal();
+        } catch (err) {
+          // A tap that landed after the deadline: the run really is over, so
+          // show the summary rather than blaming the player's last click.
+          if (err instanceof ApiError && err.status === 409) {
+            awaitingDeal.current = false;
+            await finishFromServer();
+            return;
+          }
+          setError(err instanceof Error ? err.message : 'That guess did not go through.');
+          // The guess was never recorded, so the run we are playing has moved
+          // past the one the server holds. Take its word for where we are.
+          await resync();
+          settleDeal();
+        }
+      });
     },
-    [busy, rush, phase, code, playSong, stopSong, applyRush, finishFromServer],
+    [
+      rush,
+      phase,
+      code,
+      playSong,
+      stopSong,
+      applyRush,
+      commit,
+      finishFromServer,
+      resync,
+      releaseBoard,
+      settleDeal,
+    ],
   );
+
+  const airId = rush?.answerId ?? null;
+  const warmed = rush?.next ?? null;
+
+  /**
+   * Picks up the deal the server warms after each guess. Only ever adds a
+   * `next` to the song already on air: a poll that overtakes an in-flight
+   * guess describes the previous song, and merging that would put a stale
+   * board on deck. Stops as soon as one lands.
+   */
+  useEffect(() => {
+    if (phase !== 'playing' || !airId || warmed) return;
+
+    let alive = true;
+    let tries = 0;
+    const timer = setInterval(async () => {
+      if (tries++ >= WARM_TRIES) {
+        clearInterval(timer);
+        return;
+      }
+      try {
+        const snapshot = await api<PublicRush>(`/api/lobby/${code}/rush`);
+        if (!alive || !snapshot.next || snapshot.answerId !== airId) return;
+        commit((prev) =>
+          prev.answerId === airId && !prev.next ? { ...prev, next: snapshot.next } : prev,
+        );
+      } catch {
+        // Best-effort: without it the next guess simply waits on its response,
+        // which is what it always used to do.
+      }
+    }, WARM_POLL_MS);
+
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+    // Keyed on the song on air and whether one is already on deck, not on
+    // `rush` itself — a score bump must not restart the poll's budget.
+  }, [phase, airId, warmed, code, commit]);
 
   /**
    * Back to the lobby, and the run goes with it. The host screen resumes from
@@ -339,6 +547,8 @@ export default function RushGame({ code, closing, onClose, onBack }: Props) {
       // A run that ended on a guess leaves the board locked behind its last
       // verdict; the new one opens on a fresh deal, so clear it here too.
       if (flashTimer.current) clearTimeout(flashTimer.current);
+      awaitingDeal.current = false;
+      flashDone.current = true;
       setFlash(null);
       setFrozen(null);
       guessLock.current = false;
@@ -488,7 +698,7 @@ export default function RushGame({ code, closing, onClose, onBack }: Props) {
             key={option.spotifyId}
             className={`track-row${hit ? ` track-row--${hit}` : ''}`}
             onClick={() => guess(option.spotifyId)}
-            disabled={busy || frozen !== null}
+            disabled={frozen !== null}
           >
             {hit ? (
               <span className="track-row__art track-row__verdict" aria-hidden>

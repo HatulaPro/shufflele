@@ -213,8 +213,9 @@ export type RushSongRef = {
 };
 
 /**
- * A clickable option on the Rush screen. Deliberately unmarked — which one is
- * playing is the whole question, so the answer lives only on the server.
+ * A clickable option on the Rush screen. Unmarked in itself — the answer rides
+ * beside the board on `PublicRush.answerId` rather than on any one row, so a
+ * row can be rendered without knowing whether it is the right one.
  */
 export type RushOption = {
   spotifyId: string;
@@ -274,6 +275,21 @@ export type RushState = {
   history: { song: RushSongRef; correct: boolean }[];
 };
 
+/**
+ * A deal as the client may see it: the board, both playback sources, and the
+ * answer. The client holds one of these for the song on air (flattened into
+ * `PublicRush`) and, when the warm-up has landed, one for the song after it —
+ * which is what lets a guess be judged and the next song started without
+ * waiting on the round trip. See the guess route for why shipping the answer
+ * costs nothing.
+ */
+export type PublicRushDeal = {
+  answerId: string;
+  previewUrl: string | null;
+  videoId: string | null;
+  options: RushOption[];
+};
+
 export type PublicRush = {
   timeControl: RushTimeControl;
   endsAt: number | null;
@@ -298,6 +314,27 @@ export type PublicRush = {
    */
   videoId: string | null;
   options: RushOption[];
+  /**
+   * Which of `options` is playing. Null once the run is over, when there is no
+   * song on air to name.
+   *
+   * The client judges its own guesses off this and paints the verdict on the
+   * tap rather than on the response, which is the difference between the board
+   * feeling instant and feeling like a form submission. The server still judges
+   * every guess for real — this is a mirror of its answer, never the authority
+   * (see the guess route). And it gives nothing away that `videoId` above,
+   * which names the song outright to anyone reading the network tab, had not
+   * already given away.
+   */
+  answerId: string | null;
+  /**
+   * The song after this one, when the background warm-up has landed. The client
+   * puts it on air the instant a guess is made, so the next song starts with
+   * the verdict instead of a round trip later. Null when the warm-up hasn't
+   * landed yet — the client then waits for the guess response, as it always
+   * did. See `warmNextRushSong` in lib/rush.ts.
+   */
+  next: PublicRushDeal | null;
   /** Only when over: what the finish screen collapses out. */
   summary: { correct: RushSongRef[]; wrong: RushSongRef[] } | null;
 };
