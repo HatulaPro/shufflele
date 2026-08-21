@@ -5,6 +5,7 @@ import { loadTracks, requireHost, saveLobby } from '@/lib/lobby';
 import {
   awardRushTime,
   dealRushSong,
+  retire,
   rushOver,
   rushSongRef,
   toPublicRush,
@@ -65,12 +66,14 @@ export async function POST(req: NextRequest, ctx: Ctx): Promise<NextResponse> {
   if (rush.lives <= 0) {
     rush.over = true;
   } else {
-    const dealt = await dealRushSong(rush, await loadTracks(code), lobby.unusableTrackIds);
-    for (const id of dealt.unusable) {
-      if (!lobby.unusableTrackIds.includes(id)) lobby.unusableTrackIds.push(id);
-    }
+    const dealt = await dealRushSong(
+      rush,
+      await loadTracks(code),
+      lobby.rushUnusableTrackIds ?? [],
+    );
+    retire(lobby, dealt.unusable, dealt.previewless);
     if (!dealt.ok) {
-      // The pool ran dry of playable previews mid-run. End on the score they
+      // The pool ran dry of anything playable mid-run. End on the score they
       // have rather than serving a screen with nothing on it.
       rush.over = true;
     }

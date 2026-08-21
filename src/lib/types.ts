@@ -97,6 +97,15 @@ export type Lobby = {
   /** Tracks with no usable iTunes preview — skipped by future picks. */
   unusableTrackIds: string[];
   /**
+   * Tracks Rush found nothing to play at all: no YouTube match *and* no
+   * preview. Kept apart from `unusableTrackIds` because the two modes ask
+   * different questions — classic needs a preview, Rush prefers the YouTube
+   * master and only falls back to one — so a track that is dead to classic is
+   * routinely still playable here. Absent on lobbies stored before Rush
+   * stopped sharing the classic list; read it as empty.
+   */
+  rushUnusableTrackIds?: string[];
+  /**
    * Live Rush game, present only once the host starts one. Absent on lobbies
    * stored before Rush existed, and on classic lobbies always.
    */
@@ -217,7 +226,8 @@ export type RushOption = {
 /** A song ready to go on air: the answer, where it plays from, and the board. */
 export type RushDeal = {
   secret: Track;
-  previewUrl: string;
+  /** Fallback clip, null when the deal is riding on `videoId` alone. */
+  previewUrl: string | null;
   /**
    * YouTube art-track id, so Rush can play the song from its first bar rather
    * than from the middle of a preview clip. Null when no convincing match came
@@ -246,8 +256,11 @@ export type RushState = {
   over: boolean;
   /** The song on air. Never serialised with its id during play. */
   secret: Track;
-  /** Where the song on air plays from when there is no `videoId`. */
-  previewUrl: string;
+  /**
+   * Where the song on air plays from when there is no `videoId`. Null when
+   * iTunes had no match for it — playable all the same, on the YouTube master.
+   */
+  previewUrl: string | null;
   /** Preferred source for the song on air: the master, played from t=0. */
   videoId: string | null;
   /** Ten candidates, the secret among them. Stored whole so roster changes can't reshuffle a live screen. */

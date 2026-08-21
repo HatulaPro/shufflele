@@ -7,6 +7,7 @@ import {
   MIN_RUSH_POOL,
   dealRushSong,
   freshRush,
+  retire,
   rushCandidates,
   toPublicRush,
   warmNextRushSong,
@@ -65,7 +66,7 @@ export async function POST(req: NextRequest, ctx: Ctx): Promise<NextResponse> {
 
   // A board of ten is the game. Anything less and the wrong answers run out
   // before the clock does — at the limit, every row is the right one.
-  const candidates = rushCandidates(pool, lobby.unusableTrackIds);
+  const candidates = rushCandidates(pool, lobby.rushUnusableTrackIds ?? []);
   if (candidates.length < MIN_RUSH_POOL) {
     return fail(
       `Rush needs at least ${MIN_RUSH_POOL} different songs to fill a board, and this pool has ${candidates.length}. Add another playlist.`,
@@ -84,10 +85,8 @@ export async function POST(req: NextRequest, ctx: Ctx): Promise<NextResponse> {
   }
 
   const rush = freshRush(timeControl);
-  const dealt = await dealRushSong(rush, pool, lobby.unusableTrackIds);
-  for (const id of dealt.unusable) {
-    if (!lobby.unusableTrackIds.includes(id)) lobby.unusableTrackIds.push(id);
-  }
+  const dealt = await dealRushSong(rush, pool, lobby.rushUnusableTrackIds ?? []);
+  retire(lobby, dealt.unusable, dealt.previewless);
   if (!dealt.ok) {
     // Never got a song on air, so it wasn't a game — hand the credit back.
     await refundRushCredit();

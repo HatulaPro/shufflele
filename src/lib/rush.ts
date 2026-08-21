@@ -6,6 +6,7 @@ import { pickSecret } from './select';
 import { findFullTrackVideo } from './ytmusic';
 import { RUSH_BONUS_MS } from './types';
 import type {
+  Lobby,
   PublicRush,
   RushDeal,
   RushOption,
@@ -29,11 +30,11 @@ import type {
  * the preview clip exactly as it always did. Classic mode is untouched and
  * stays on previews throughout.
  *
- * Selection reuses the classic draw when more than one contributor is in the
- * pool (least-served first, popularity-weighted inside their tracks,
- * lib/select.ts) and goes fully uniform when there's only one, where the
- * fairness machinery has nobody to be fair to and popularity weighting would
- * just shrink the game.
+ * Selection reuses the classic draw when more than one playlist is in the pool
+ * (least-served first, popularity-weighted inside their tracks, lib/select.ts)
+ * and goes fully uniform when there's only one, where the fairness machinery
+ * has nobody to be fair to and popularity weighting would just shrink the
+ * game.
  *
  * Songs may repeat freely — over a 60-second clock the pool is effectively
  * bottomless, and an exclusion list would only add state to forget.
@@ -62,7 +63,7 @@ export function freshRush(timeControl: RushTimeControl, now = Date.now()): RushS
     score: 0,
     over: false,
     secret: {} as Track,
-    previewUrl: '',
+    previewUrl: null,
     videoId: null,
     options: [],
     next: null,
@@ -130,12 +131,18 @@ function playedByContributor(state: RushState): Map<string, number> {
 }
 
 /**
- * One secret-track draw. Uniform over the whole pool for a lone contributor;
- * otherwise the classic bag shuffle with the popularity weighting, which is
- * what "more popular songs, re-prioritised players" means here.
+ * One secret-track draw. Uniform over the whole pool when the lobby has a
+ * single playlist in it; otherwise the classic bag shuffle with the popularity
+ * weighting, which is what "more popular songs, re-prioritised players" means
+ * here.
+ *
+ * The test is on playlists rather than contributor names because a name is the
+ * wrong unit at both ends: two guests who both typed "Dan" are two playlists
+ * that deserve the fair draw, and one playlist pasted by two people is still
+ * one playlist, where weighting only shrinks the game.
  */
 function pickRushTrack(pool: Track[], state: RushState): Track {
-  const solo = new Set(pool.map((t) => t.contributor)).size <= 1;
+  const solo = new Set(pool.map((t) => t.playlistId)).size <= 1;
   if (solo) return pool[crypto.randomInt(pool.length)];
   return pickSecret(pool, playedByContributor(state)) ?? pool[crypto.randomInt(pool.length)];
 }
@@ -169,17 +176,23 @@ function shuffled<T>(items: T[]): T[] {
 }
 
 /**
- * Picks a song and builds its board. Every track tried without a playable
- * preview comes back marked unusable so the caller can retire it: mid-run
- * those lookups are dead clock, and unrecorded they would be paid again on
- * every single deal for the rest of the lobby's life.
+ * Picks a song and builds its board. Every track tried with nothing at all to
+ * play comes back marked unusable so the caller can retire it: mid-run those
+ * lookups are dead clock, and unrecorded they would be paid again on every
+ * single deal for the rest of the lobby's life.
+ *
+ * `unusable` is what *Rush* can't play — neither source resolved. `previewless`
+ * is the weaker fact that iTunes had no match, which retires the track from
+ * classic mode only. Reporting them separately is the whole point: a track can
+ * be dead to classic and perfectly fine here.
  */
 async function buildDeal(
   state: RushState,
   candidates: Track[],
-): Promise<{ deal: RushDeal | null; unusable: string[] }> {
+): Promise<{ deal: RushDeal | null; unusable: string[]; previewless: string[] }> {
   const unusable: string[] = [];
-  if (candidates.length < MIN_LIVE_POOL) return { deal: null, unusable };
+  const previewless: string[] = [];
+  if (candidates.length < MIN_LIVE_POOL) return { deal: null, unusable, previewless };
 
   const tried = new Set<string>();
   let secret: Track | null = null;
@@ -200,7 +213,16 @@ async function buildDeal(
     ]);
 
     const preview = match?.previewUrl ?? track.previewUrl ?? null;
-    if (preview) {
+    if (!preview) previewless.push(track.spotifyId);
+
+    // Either source is a playable song. Gating this on the preview alone —
+    // which is what it used to do — threw away tracks whose YouTube master had
+    // already been found and was the thing Rush would actually have played,
+    // purely because iTunes' matcher couldn't clear its threshold on the
+    // title. That fell hardest on non-Latin and remix-heavy catalogues, and
+    // since the rejects were retired for the lobby's whole life it quietly
+    // sanded every pool down toward the mainstream.
+    if (video || preview) {
       secret = { ...track, albumArt: track.albumArt ?? match?.albumArt ?? null };
       previewUrl = preview;
       videoId = video;
@@ -209,7 +231,7 @@ async function buildDeal(
     unusable.push(track.spotifyId);
   }
 
-  if (!secret || !previewUrl) return { deal: null, unusable };
+  if (!secret) return { deal: null, unusable, previewless };
 
   // Distractors come from anywhere in the pool — the answer's own playlist
   // included, which is the fun kind of hard.
@@ -220,6 +242,7 @@ async function buildDeal(
   return {
     deal: { secret, previewUrl, videoId, options: shuffled([secret, ...others]) },
     unusable,
+    previewless,
   };
 }
 
@@ -236,22 +259,55 @@ function applyDeal(state: RushState, deal: RushDeal): void {
  * that is the whole point of warmNextRushSong — and otherwise falls back to a
  * synchronous pick. `ok` is false when the pool has nothing playable left, so
  * the game can end on the score it has rather than sit wedged.
+ *
+ * `unusable` in and out is Rush's own list (`rushUnusableTrackIds`), never the
+ * classic one — see the field's note in lib/types.ts. `previewless` rides along
+ * for the caller to fold into the classic list.
  */
 export async function dealRushSong(
   state: RushState,
   pool: Track[],
   unusable: Iterable<string> = [],
-): Promise<{ ok: boolean; unusable: string[] }> {
+): Promise<{ ok: boolean; unusable: string[]; previewless: string[] }> {
   const queued = state.next;
   if (queued) {
     state.next = null;
     applyDeal(state, queued);
-    return { ok: true, unusable: [] };
+    return { ok: true, unusable: [], previewless: [] };
   }
 
   const result = await buildDeal(state, rushCandidates(pool, unusable));
   if (result.deal) applyDeal(state, result.deal);
-  return { ok: result.deal !== null, unusable: result.unusable };
+  return { ok: result.deal !== null, unusable: result.unusable, previewless: result.previewless };
+}
+
+/**
+ * Files what a deal learned onto the lobby, into the two lists that mean
+ * different things: `unusable` retires a track from Rush, `previewless` from
+ * classic. Both are deduped, since a warm-up and an inline deal can report the
+ * same id.
+ *
+ * Rush's list starts empty on lobbies that predate it, which also disposes of
+ * the tracks the old preview-only gate wrongly retired — they were filed under
+ * the classic list, where the judgement is still true.
+ */
+export function retire(lobby: Lobby, unusable: Iterable<string>, previewless: Iterable<string>): void {
+  const rush = (lobby.rushUnusableTrackIds ??= []);
+  const seenRush = new Set(rush);
+  for (const id of unusable) {
+    if (!seenRush.has(id)) {
+      seenRush.add(id);
+      rush.push(id);
+    }
+  }
+
+  const seenClassic = new Set(lobby.unusableTrackIds);
+  for (const id of previewless) {
+    if (!seenClassic.has(id)) {
+      seenClassic.add(id);
+      lobby.unusableTrackIds.push(id);
+    }
+  }
 }
 
 /**
@@ -267,17 +323,17 @@ export async function warmNextRushSong(code: string): Promise<void> {
     if (!lobby || !rush || rush.next || rushOver(rush)) return;
 
     const pool = poolFor(lobby, await loadTracks(code), Math.max(lobby.currentRound, 1));
-    const { deal, unusable } = await buildDeal(rush, rushCandidates(pool, lobby.unusableTrackIds));
+    const { deal, unusable, previewless } = await buildDeal(
+      rush,
+      rushCandidates(pool, lobby.rushUnusableTrackIds ?? []),
+    );
 
     // Merge into a fresh read rather than the copy above: a guess may well have
     // landed while the lookup ran, and this write must not roll it back.
     const fresh = await loadLobby(code);
     if (!fresh?.rush) return;
 
-    const seen = new Set(fresh.unusableTrackIds);
-    for (const id of unusable) {
-      if (!seen.has(id)) fresh.unusableTrackIds.push(id);
-    }
+    retire(fresh, unusable, previewless);
     if (deal && !fresh.rush.next && !rushOver(fresh.rush)) fresh.rush.next = deal;
 
     await saveLobby(fresh);

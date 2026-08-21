@@ -482,8 +482,6 @@ export default function RushGame({ code, closing, onClose, onBack }: Props) {
           );
         })}
       </div>
-
-      <p className="tiny rush-hint">Playing from the top — tap fast.</p>
     </main>
   );
 }
