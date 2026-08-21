@@ -38,6 +38,21 @@ export const PLAYLIST_TTL_SECONDS = 10 * 60;
  */
 export const TOKEN_SLACK_SECONDS = 120;
 
+/**
+ * A track's YouTube art-track id (lib/ytmusic.ts). Long, because the answer is
+ * a fact about the catalogue rather than about a lobby: the master recording
+ * for a Spotify id does not change, and every cached row is one undocumented
+ * request Rush doesn't have to make mid-run.
+ */
+export const YT_VIDEO_TTL_SECONDS = 30 * 24 * 60 * 60;
+
+/**
+ * Misses expire far sooner. A track with no art track is usually a permanent
+ * fact too, but this also absorbs the transient case — a bot-checked lookup, a
+ * timeout — and those must not be remembered for a month.
+ */
+export const YT_VIDEO_MISS_TTL_SECONDS = 12 * 60 * 60;
+
 export const keys = {
   lobby: (code: string) => `lobby:${code}`,
   tracks: (code: string) => `lobby:${code}:tracks`,
@@ -46,6 +61,8 @@ export const keys = {
   prefetchLock: (code: string, n: number) => `lobby:${code}:round:${n}:prefetch`,
   ratelimit: (day: string) => `ratelimit:games:${day}`,
   playlist: (playlistId: string) => `cache:playlist:${playlistId}`,
+  /** Spotify id to YouTube art-track id, for Rush's from-the-top playback. */
+  ytVideo: (spotifyId: string) => `cache:yt:${spotifyId}`,
   /** Shared across instances so one token serves the whole deployment. */
   spotifyToken: () => 'cache:spotify:token',
 };

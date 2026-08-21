@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { cookies } from 'next/headers';
 import { LOBBY_TTL_SECONDS, keys, redis } from './redis';
 import { roundsByContributor } from './select';
-import type { Lobby, Player, PublicLobby, Round, Track } from './types';
+import type { Lobby, LobbyMode, Player, PublicLobby, Round, Track } from './types';
 
 export function randomToken(): string {
   return crypto.randomBytes(24).toString('base64url');
@@ -16,7 +16,7 @@ export function hostCookieName(code: string): string {
  * Creates a lobby under a free 6-digit code. Collisions are resolved by the
  * atomic `SET … NX`, never by a read-then-write race. SPEC §2.2.
  */
-export async function createLobby(): Promise<Lobby> {
+export async function createLobby(mode: LobbyMode = 'classic'): Promise<Lobby> {
   const hostToken = randomToken();
 
   for (let attempt = 0; attempt < 12; attempt++) {
@@ -25,6 +25,7 @@ export async function createLobby(): Promise<Lobby> {
       code,
       hostToken,
       createdAt: Date.now(),
+      mode,
       players: [],
       currentRound: 0,
       usedTrackIds: [],
@@ -191,6 +192,7 @@ export function toPublicLobby(lobby: Lobby, isHost: boolean): PublicLobby {
   return {
     code: lobby.code,
     isHost,
+    mode: lobby.mode ?? 'classic',
     // The playlist's name never reaches the host screen — an audience can read
     // that screen, and a playlist title is a giveaway. SPEC §1.5.
     players: lobby.players.map((player) => ({
@@ -203,6 +205,7 @@ export function toPublicLobby(lobby: Lobby, isHost: boolean): PublicLobby {
     trackCount,
     currentRound: lobby.currentRound,
     canStart: trackCount > 0,
+    rushActive: lobby.rush != null,
   };
 }
 

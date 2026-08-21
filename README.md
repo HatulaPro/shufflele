@@ -162,6 +162,68 @@ also polls Replicate directly (at most once every 3s, and only until the stems l
 the whole flow work on a laptop with no tunnel, and doubles as insurance against a dropped
 webhook in production. Set `REPLICATE_POLL_FALLBACK=0` to turn it off.
 
+### Rush mode
+
+Creating a lobby now asks for a mode first. **Classic** is everything above; **Rush** is a
+beat-the-clock sprint for whoever is holding the host phone: songs play from t=0 (no Demucs, no
+stems, no daily cap — a song costs a couple of metadata lookups and nothing else), and the
+player clicks the one that's playing out of ten candidates drawn from the pooled playlists. Three lives; a miss costs one and moves straight on; a hit scores and moves straight
+on. Time controls are 30 seconds, a minute, or endless.
+
+Song selection reuses `pickSecret` — least-served contributor first, popularity-weighted inside
+their tracks — whenever more than one playlist is in the pool, and drops to fully uniform when
+there's only one, where the fairness machinery has nobody to be fair to. Songs may repeat; over
+a minute-long clock an exclusion list would only be state to forget. Rush needs ten different
+songs in the pool to fill a board, and tracks with no preview are retired into the lobby's
+unusable list on the way past, exactly as classic rounds retire them. Which of the ten options is
+the answer never leaves the server, same rule as the classic guess route — the phone is playing
+in front of a room. The high score lives in localStorage on the host phone, per time control,
+because that is the only scoreboard a solo sprint needs.
+
+The clock is a deadline the server stamps when the first song actually goes on air, not when the
+game is dealt: the ready screen and the ready-set-go beats come out of nobody's 30 seconds, and a
+refresh mid-run re-arms the same screen without buying extra time. The song after the one playing
+is dealt in the background via `after()` (`warmNextRushSong`, the same idea as `lib/prefetch.ts`
+minus the GPU), so a guess is answered from memory instead of spending the player's clock on an
+iTunes lookup.
+
+#### Playing from the first bar
+
+Rush means it literally, which a preview clip cannot do. Apple's and Spotify's previews are
+pre-cut ~30s excerpts taken from the *middle* of a recording — a file, not a stream, so there is
+no offset to pass and no way to ask for the top. Classic mode is unaffected and stays on previews
+throughout; there, starting mid-song is the point.
+
+So each Rush deal also resolves the track's **art track** on YouTube (`lib/ytmusic.ts`) and the
+client streams it from `startSeconds: 0` in a hidden iframe (`hooks/useRushPlayer.ts`). An art
+track is the auto-generated art-and-audio upload for a catalogue recording — it is the master, so
+it starts on the first bar, where an official music video routinely opens with a film intro or a
+cold open.
+
+Discovery does **not** use the YouTube Data API. `search.list` costs 100 quota units against the
+free 10,000/day, which is 100 lookups a day for the whole deployment — a single 60-second run can
+eat a sixth of that, and the play-count chip is already spending from the same budget. Instead
+this calls the endpoint music.youtube.com uses for its own search box, with the "Songs" filter.
+It takes no API key, has no published ceiling, and answers in ~10KB. Results are scored on title
+similarity, then corroborated by artist, album and runtime: a candidate whose length disagrees
+with Spotify's `durationMs` by more than ten seconds is a different cut of the song and is
+rejected, however well the words line up. The artist is deliberately not *required* — YouTube
+Music romanises names, so a track credited "עומר אדם" comes back as "Omer Adam", and demanding a
+match there would reject the non-Latin catalogue outright.
+
+Every answer is cached in Redis by Spotify id (`cache:yt:*`, 30 days; misses 12 hours), because
+the pool is small and repeats hard. Two caveats worth knowing:
+
+- **It is an undocumented endpoint.** Every failure path returns null and the deal falls back to
+  the preview clip it played before, so the run degrades to today's behaviour rather than
+  breaking. Vercel's functions call it from datacenter IPs, which YouTube bot-checks harder than
+  a residential one; if it ever starts coming back empty in production, that is the first thing
+  to suspect, and the fallback is what you will hear.
+- **The video id reaches the browser**, where the preview URL's opaque filename gave nothing
+  away. Anyone reading the network tab can look the song up. That is inherent to letting YouTube
+  do the streaming, and an accepted trade for a party game — it is also why the player is hidden
+  rather than embedded, since the player's own chrome would simply print the title on screen.
+
 ## Deploying
 
 Vercel Hobby, no configuration needed. Set the environment variables in the project settings and
@@ -264,7 +326,8 @@ Carried over from the spec, all accepted:
   Very hard.
 - Par's thresholds are absolute while song selection is playlist-relative, so most rounds land on
   Very easy / Easy and the harder pars are rare.
-- 30s previews, so guesses are made on a fragment.
+- 30s previews, so guesses are made on a fragment. (Classic only — Rush plays the full track from
+  the top; see Rush mode.)
 - Three real stems means a short ladder: one row per stem plus a final row.
 - iTunes matching will occasionally pick a remaster or a live version.
 - A track iTunes can't match falls back to Spotify's preview, which may be as short as ~15s.

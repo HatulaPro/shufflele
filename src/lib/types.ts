@@ -47,6 +47,8 @@ export type Track = {
   contributor: string;
 };
 
+export type LobbyMode = 'classic' | 'rush';
+
 export type Player = {
   id: string;
   name: string;
@@ -77,6 +79,8 @@ export type Lobby = {
   code: string;
   hostToken: string;
   createdAt: number;
+  /** `classic` is the stem-ladder party game; `rush` is the beat-the-clock one. */
+  mode: LobbyMode;
   players: Player[];
   /**
    * The player the host phone added for itself, once it has. They run the game
@@ -92,6 +96,11 @@ export type Lobby = {
   usedTrackIds: string[];
   /** Tracks with no usable iTunes preview — skipped by future picks. */
   unusableTrackIds: string[];
+  /**
+   * Live Rush game, present only once the host starts one. Absent on lobbies
+   * stored before Rush existed, and on classic lobbies always.
+   */
+  rush?: RushState | null;
 };
 
 export type RoundState =
@@ -169,6 +178,99 @@ export type Round = {
   polledAt: number;
 };
 
+// --- rush ------------------------------------------------------------------
+//
+// The beat-the-clock mode. One phone plays; the pool is everyone's playlists,
+// but nothing here needs Demucs — songs play from t=0 off their preview, so a
+// Rush game is cheap in exactly the way a classic round is not.
+
+/** Seconds on the clock. Null = infinite. */
+export type RushTimeControl = 30 | 60 | null;
+
+/** A finished song, as the finish screen lists it. */
+export type RushSongRef = {
+  title: string;
+  artist: string;
+  albumArt: string | null;
+  contributor: string;
+};
+
+/**
+ * A clickable option on the Rush screen. Deliberately unmarked — which one is
+ * playing is the whole question, so the answer lives only on the server.
+ */
+export type RushOption = {
+  spotifyId: string;
+  title: string;
+  artist: string;
+  albumArt: string | null;
+};
+
+/** A song ready to go on air: the answer, where it plays from, and the board. */
+export type RushDeal = {
+  secret: Track;
+  previewUrl: string;
+  /**
+   * YouTube art-track id, so Rush can play the song from its first bar rather
+   * than from the middle of a preview clip. Null when no convincing match came
+   * back, which is the signal to fall back to `previewUrl`. See lib/ytmusic.ts.
+   */
+  videoId: string | null;
+  options: Track[];
+};
+
+export type RushState = {
+  timeControl: RushTimeControl;
+  /** When the game was dealt. The clock does not run from here — see `begunAt`. */
+  startedAt: number;
+  /**
+   * When the player actually started playing, i.e. when the first song went on
+   * air. Null until then: a run sitting on the ready screen must not burn clock.
+   */
+  begunAt: number | null;
+  /** Epoch ms the clock runs out at. Null = infinite, or not begun yet. */
+  endsAt: number | null;
+  lives: number;
+  score: number;
+  over: boolean;
+  /** The song on air. Never serialised with its id during play. */
+  secret: Track;
+  /** Where the song on air plays from when there is no `videoId`. */
+  previewUrl: string;
+  /** Preferred source for the song on air: the master, played from t=0. */
+  videoId: string | null;
+  /** Ten candidates, the secret among them. Stored whole so roster changes can't reshuffle a live screen. */
+  options: Track[];
+  /**
+   * The song after this one, dealt in the background while this one plays, so
+   * a guess never waits on an iTunes lookup with the clock running. Null when
+   * the warm-up hasn't landed yet — the guess route then deals inline.
+   */
+  next: RushDeal | null;
+  history: { song: RushSongRef; correct: boolean }[];
+};
+
+export type PublicRush = {
+  timeControl: RushTimeControl;
+  endsAt: number | null;
+  lives: number;
+  maxLives: number;
+  score: number;
+  over: boolean;
+  /** Null once the game is over — there's nothing left to play. */
+  previewUrl: string | null;
+  /**
+   * When set, the client plays this from t=0 in a hidden YouTube iframe and
+   * ignores `previewUrl`. It does name the song to anyone reading the network
+   * tab, which `previewUrl`'s opaque filename does not — an accepted trade for
+   * a party game, and the reason the player stays hidden rather than embedded.
+   */
+  videoId: string | null;
+  options: RushOption[];
+  /** Only when over: what the finish screen collapses out. */
+  summary: { correct: RushSongRef[]; wrong: RushSongRef[] } | null;
+};
+
 // --- client-facing shapes ---
 
 export type PublicRow = {
@@ -225,11 +327,14 @@ export type PublicPlayer = {
 export type PublicLobby = {
   code: string;
   isHost: boolean;
+  mode: LobbyMode;
   players: PublicPlayer[];
   /** Only what the round in play draws from — a joiner's tracks aren't counted yet. */
   trackCount: number;
   currentRound: number;
   canStart: boolean;
+  /** A Rush game exists — the host screen resumes into it, finish screen included. */
+  rushActive: boolean;
 };
 
 export type Candidate = {

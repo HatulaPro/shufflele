@@ -956,6 +956,318 @@ a {
   border: 1px solid var(--t-correct-line);
 }
 
+/* --- mode chooser ------------------------------------------------------- */
+
+.mode-card {
+  appearance: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, var(--ink-2), rgba(20, 15, 32, 0.72));
+  box-shadow: var(--shadow);
+  padding: 18px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+  transition: transform 0.12s ease, border-color 0.12s ease, opacity 0.12s ease;
+}
+
+.mode-card:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.mode-card:disabled {
+  cursor: not-allowed;
+}
+
+.mode-card--dim {
+  opacity: 0.45;
+}
+
+.mode-card__name {
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  background: linear-gradient(96deg, var(--brand), var(--brand-2));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  width: fit-content;
+}
+
+.mode-card__blurb {
+  color: var(--muted);
+  font-size: 14.5px;
+}
+
+.mode-card__points {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.mode-card__busy {
+  font-size: 13px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* --- segmented control (rush time control) ------------------------------- */
+
+.seg {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  background: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px;
+}
+
+.seg__btn {
+  appearance: none;
+  border: none;
+  border-radius: 999px;
+  padding: 10px 8px;
+  font-size: 14.5px;
+  font-weight: 700;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.seg__btn--on {
+  background: linear-gradient(104deg, var(--brand), var(--brand-2));
+  color: #21091a;
+  box-shadow: 0 8px 20px -12px var(--brand);
+}
+
+/* --- rush: play ---------------------------------------------------------- */
+
+.rush-clock {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  min-width: 58px;
+  text-align: center;
+}
+
+.hearts {
+  display: inline-flex;
+  gap: 3px;
+  align-items: center;
+}
+
+.heart {
+  font-size: 15px;
+  color: var(--brand);
+  text-shadow: 0 0 8px rgba(255, 61, 129, 0.55);
+}
+
+.heart--lost {
+  color: var(--ink-4);
+  text-shadow: none;
+}
+
+.rush-flash {
+  border-radius: var(--radius-sm);
+  padding: 10px 13px;
+  font-size: 15px;
+  font-weight: 750;
+  text-align: center;
+  animation: quip-in 0.2s ease both;
+}
+
+.rush-flash--correct {
+  background: var(--t-correct-bg);
+  border: 1px solid var(--t-correct-line);
+  color: var(--t-correct-text);
+}
+
+.rush-flash--wrong {
+  background: var(--t-none-bg);
+  border: 1px solid var(--t-none-line);
+  color: var(--t-none-text);
+}
+
+.rush-board {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.track-row {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--ink-2);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 0.1s ease, border-color 0.12s ease, background 0.12s ease;
+}
+
+.track-row:active:not(:disabled) {
+  transform: scale(0.98);
+  background: var(--ink-3);
+}
+
+.track-row:disabled {
+  cursor: not-allowed;
+}
+
+.track-row--static {
+  cursor: default;
+}
+
+.track-row--static:active {
+  transform: none;
+  background: var(--ink-2);
+}
+
+.track-row__art {
+  width: 46px;
+  height: 46px;
+  flex: none;
+  border-radius: 8px;
+  object-fit: cover;
+  background: var(--ink-3);
+}
+
+.track-row__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.track-row__title {
+  font-weight: 650;
+  font-size: 15px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.track-row__artist {
+  font-size: 13px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rush-hint {
+  text-align: center;
+}
+
+/* --- rush: arm / finish --------------------------------------------------- */
+
+.rush-arm {
+  text-align: center;
+  align-items: center;
+  width: 100%;
+}
+
+.rush-count {
+  font-size: 64px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  margin: 12px 0;
+  background: linear-gradient(96deg, var(--brand), var(--brand-2));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: count-pop 0.4s ease both;
+}
+
+@keyframes count-pop {
+  from {
+    opacity: 0;
+    transform: scale(1.35);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.rush-best {
+  text-align: center;
+  font-size: 14.5px;
+  font-weight: 650;
+  color: var(--muted);
+  margin: 0;
+}
+
+.rush-best--new {
+  color: var(--brand-2);
+}
+
+.rush-list {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--ink-2);
+  overflow: hidden;
+}
+
+.rush-list summary {
+  padding: 12px 14px;
+  font-size: 14.5px;
+  font-weight: 700;
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rush-list summary::-webkit-details-marker {
+  display: none;
+}
+
+.rush-list summary::after {
+  content: '›';
+  margin-left: auto;
+  color: var(--muted-dim);
+  transform: rotate(90deg);
+  transition: transform 0.15s ease;
+}
+
+.rush-list[open] summary::after {
+  transform: rotate(-90deg);
+}
+
+.rush-list--good summary {
+  color: var(--t-correct-text);
+}
+
+.rush-list--bad summary {
+  color: var(--t-none-text);
+}
+
+.rush-list__body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 10px 10px;
+}
+
+.rush-list__body .track-row {
+  background: var(--ink-3);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

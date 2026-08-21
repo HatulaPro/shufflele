@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import JoinForm from '@/components/JoinForm';
 import PlayerList from '@/components/PlayerList';
 import Round from '@/components/Round';
+import RushGame from '@/components/RushGame';
 import { api } from '@/lib/client';
 import type { PublicLobby } from '@/lib/types';
 
@@ -23,6 +24,10 @@ export default function HostGame({ code }: { code: string }) {
   /** Kept apart from `loadError`, which swaps out the whole screen. */
   const [removeError, setRemoveError] = useState<string | null>(null);
   const [origin, setOrigin] = useState('');
+  /** Rush mode: seconds on the clock, 0 = infinite. A default beats making everyone read three options. */
+  const [timeControl, setTimeControl] = useState<0 | 30 | 60>(60);
+  /** Set once a Rush game exists — covers both starting one and resuming after a refresh. */
+  const [rushActive, setRushActive] = useState(false);
   /** The lobby keeps `currentRound` set after a round ends, so the resume below
       must only ever fire once — otherwise leaving a round bounces straight back
       into it on the next poll. */
@@ -34,7 +39,7 @@ export default function HostGame({ code }: { code: string }) {
   // round component does its own polling. SPEC §2: the host polls, nothing
   // is pushed.
   useEffect(() => {
-    if (roundNumber !== null) return;
+    if (roundNumber !== null || rushActive) return;
     let alive = true;
 
     const load = async () => {
@@ -48,6 +53,10 @@ export default function HostGame({ code }: { code: string }) {
           resumed.current = true;
           setRoundNumber(next.currentRound);
         }
+        if (!resumed.current && next.mode === 'rush' && next.rushActive) {
+          resumed.current = true;
+          setRushActive(true);
+        }
       } catch (err) {
         if (alive) setLoadError(err instanceof Error ? err.message : 'Lost the lobby.');
       }
@@ -59,20 +68,29 @@ export default function HostGame({ code }: { code: string }) {
       alive = false;
       clearInterval(timer);
     };
-  }, [code, roundNumber]);
+  }, [code, roundNumber, rushActive]);
 
   const start = useCallback(async () => {
     setStarting(true);
     setStartError(null);
     try {
-      const { n } = await api<{ n: number }>(`/api/lobby/${code}/start`, { method: 'POST' });
-      setRoundNumber(n);
+      if (lobby?.mode === 'rush') {
+        await api(`/api/lobby/${code}/rush/start`, {
+          method: 'POST',
+          body: JSON.stringify({ timeControl }),
+        });
+        resumed.current = true;
+        setRushActive(true);
+      } else {
+        const { n } = await api<{ n: number }>(`/api/lobby/${code}/start`, { method: 'POST' });
+        setRoundNumber(n);
+      }
     } catch (err) {
       setStartError(err instanceof Error ? err.message : 'Could not start the round.');
     } finally {
       setStarting(false);
     }
-  }, [code]);
+  }, [code, lobby?.mode, timeControl]);
 
   /**
    * Nothing has started yet, so a removal here is immediate: the player and
@@ -109,6 +127,10 @@ export default function HostGame({ code }: { code: string }) {
     }
     router.replace('/');
   }, [code, router]);
+
+  if (lobby?.mode === 'rush' && rushActive) {
+    return <RushGame code={code} closing={closing} onClose={close} onBack={() => setRushActive(false)} />;
+  }
 
   if (roundNumber !== null) {
     return (
@@ -210,12 +232,42 @@ export default function HostGame({ code }: { code: string }) {
       {startError && <p className="notice notice--error">{startError}</p>}
 
       <div className="stack stack--tight" style={{ marginTop: 'auto' }}>
+        {lobby.mode === 'rush' && (
+          <div className="field">
+            <span className="label">Time control</span>
+            <div className="seg" role="radiogroup" aria-label="Time control">
+              {(
+                [
+                  [30, '30 sec'],
+                  [60, '1 min'],
+                  [0, '∞'],
+                ] as const
+              ).map(([value, label]) => (
+                <button
+                  key={value}
+                  role="radio"
+                  aria-checked={timeControl === value}
+                  className={`seg__btn ${timeControl === value ? 'seg__btn--on' : ''}`}
+                  onClick={() => setTimeControl(value)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         <button
           className="btn btn--primary btn--block"
           onClick={start}
           disabled={!lobby.canStart || starting}
         >
-          {starting ? 'Picking a song…' : 'Start game'}
+          {starting
+            ? lobby.mode === 'rush'
+              ? 'Dealing…'
+              : 'Picking a song…'
+            : lobby.mode === 'rush'
+              ? 'Start rush'
+              : 'Start game'}
         </button>
         {!lobby.canStart && (
           <p className="tiny" style={{ textAlign: 'center' }}>
