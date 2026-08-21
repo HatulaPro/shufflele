@@ -5,6 +5,9 @@ import { useState } from 'react';
 import { api } from '@/lib/client';
 import type { LobbyMode } from '@/lib/types';
 
+// The "new" tag on Rush retires on its own — see the GitHub issue for cleanup.
+const RUSH_NEW_UNTIL = Date.parse('2026-08-26T00:00:00Z');
+
 const MODES: {
   mode: LobbyMode;
   name: string;
@@ -29,6 +32,7 @@ export default function Create() {
   const router = useRouter();
   const [busy, setBusy] = useState<LobbyMode | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const rushIsNew = Date.now() < RUSH_NEW_UNTIL;
 
   const create = async (mode: LobbyMode) => {
     if (busy) return;
@@ -64,7 +68,10 @@ export default function Create() {
               onClick={() => create(mode)}
               disabled={busy !== null}
             >
-              <span className="mode-card__name">{name}</span>
+              <span className="mode-card__head">
+                <span className="mode-card__name">{name}</span>
+                {mode === 'rush' && rushIsNew && <span className="badge-new">New</span>}
+              </span>
               <span className="mode-card__blurb">{blurb}</span>
               <span className="mode-card__points">
                 {points.map((point) => (
