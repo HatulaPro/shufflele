@@ -14,6 +14,15 @@ import { useCallback, useEffect, useRef, useState } from 'react';
  *
  * Two backends, one at a time: `play` always silences the other, so a fallback
  * song can never end up layered over an iframe that is still running.
+ *
+ * A deal carrying a video id is not a promise that the video will play. The
+ * server resolves art tracks by identity — title, artist, album, runtime — and
+ * cannot see whether one is embeddable, region-locked for this listener, or
+ * still up (lib/ytmusic.ts). Every one of those only fails here, in the
+ * browser, with the deal already on screen. So the video id is a preference
+ * rather than a commitment: whenever it turns out not to be playable, the
+ * preview clip in the same source goes on air in its place. Silence is never
+ * an outcome while the deal has anything left to play.
  */
 
 export type RushSource = {
@@ -65,7 +74,7 @@ type YtNamespace = {
       playerVars: Record<string, number>;
       events: {
         onReady: () => void;
-        onError: () => void;
+        onError: (event: { data: number }) => void;
         onStateChange: (event: { data: number }) => void;
       };
     },
@@ -83,6 +92,25 @@ const IFRAME_API = 'https://www.youtube.com/iframe_api';
 
 /** `YT.PlayerState.PLAYING`, without reaching into the namespace for it. */
 const PLAYING = 1;
+
+/**
+ * The `onError` codes that mean *this video will never play here*: removed or
+ * private (100), and embedding disallowed (101 and its alias 150). Retrying
+ * them is pointless, so they retire the video id and hand the song to the
+ * preview clip. The other codes — a malformed id (2), an HTML5 playback
+ * failure (5) — can be transient, and keep the old behaviour of offering the
+ * manual play chip.
+ */
+const FATAL_ERRORS = new Set([100, 101, 150]);
+
+/**
+ * How long a song waits on a player that hasn't reported ready before it gives
+ * up and plays its preview instead. Long enough to cover a script still in
+ * flight on a slow connection, short enough that a run doesn't open on a wall
+ * of silence. Only ever spent when the API is unusually slow — the player is
+ * built on mount, whole beats before the first "Go!".
+ */
+const READY_GRACE_MS = 2500;
 
 /** Module-level so several mounts share one script tag and one load. */
 let apiPromise: Promise<YtNamespace> | null = null;
@@ -157,11 +185,27 @@ export function useRushPlayer(): RushPlayer {
   const ytRef = useRef<YtPlayer | null>(null);
   const ytReadyRef = useRef(false);
   /**
+   * The iframe API never arrived, so there is no video backend at all and every
+   * song plays its preview. Latched rather than retried: the script load is
+   * shared process-wide and a run has no time to wait on a second attempt.
+   */
+  const ytFailedRef = useRef(false);
+  /**
+   * Video ids YouTube has refused for good (see FATAL_ERRORS). A pool repeats
+   * hard — the same few hundred tracks all night, and repeats inside one run —
+   * so a video that failed once must not cost the same silence again.
+   */
+  const deadVideosRef = useRef<Set<string>>(new Set());
+  /**
    * A song asked for before the iframe API finished loading. The first song of
    * a run races the script download, and dropping it would mean the run opens
-   * on silence.
+   * on silence. Held as the whole source, not just the id, because the fallback
+   * paths need the preview that came with it.
    */
-  const pendingRef = useRef<string | null>(null);
+  const pendingRef = useRef<RushSource | null>(null);
+  const pendingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Whatever is currently meant to be on air, for `onError` to recover from. */
+  const currentRef = useRef<RushSource | null>(null);
   /**
    * True once the run is meant to be audible. The priming `play()` in `unlock`
    * is async, and on a slow connection it can resolve *after* "Go!" has already
@@ -174,6 +218,43 @@ export function useRushPlayer(): RushPlayer {
     if (!audioRef.current) audioRef.current = new Audio();
     return audioRef.current;
   }, []);
+
+  const clearPending = useCallback(() => {
+    if (pendingTimer.current) {
+      clearTimeout(pendingTimer.current);
+      pendingTimer.current = null;
+    }
+    pendingRef.current = null;
+  }, []);
+
+  /** The video id worth trying for this source, or null to go straight to the clip. */
+  const usableVideo = useCallback((source: RushSource): string | null => {
+    if (!source.videoId) return null;
+    if (ytFailedRef.current) return null;
+    if (deadVideosRef.current.has(source.videoId)) return null;
+    return source.videoId;
+  }, []);
+
+  const playPreview = useCallback(
+    (source: RushSource) => {
+      if (!source.previewUrl) {
+        // Nothing left to play. The chip is the only affordance there is, and a
+        // transient failure can still recover behind it.
+        setBlocked(true);
+        return;
+      }
+      const audio = getAudio();
+      if (audio.src !== source.previewUrl) audio.src = source.previewUrl;
+      audio.currentTime = 0;
+      // Autoplay policies can still refuse after all our taps — a reload
+      // mid-run, mostly. The play button on the bar is the escape hatch.
+      audio
+        .play()
+        .then(() => setBlocked(false))
+        .catch(() => setBlocked(true));
+    },
+    [getAudio],
+  );
 
   // Build the hidden player once, on mount, so the first deal doesn't pay for
   // the script download with the clock running.
@@ -202,17 +283,40 @@ export function useRushPlayer(): RushPlayer {
             onReady: () => {
               ytReadyRef.current = true;
               const queued = pendingRef.current;
-              if (queued) {
-                pendingRef.current = null;
-                ytRef.current?.unMute();
-                ytRef.current?.loadVideoById({ videoId: queued, startSeconds: 0 });
-                ytRef.current?.playVideo();
+              clearPending();
+              // The grace timer may already have handed this song to its clip,
+              // and the run may have moved on entirely; either way `liveRef`
+              // and the queue agree on whether this is still wanted.
+              if (!queued || !liveRef.current) return;
+              const videoId = usableVideo(queued);
+              if (!videoId) {
+                playPreview(queued);
+                return;
               }
+              ytRef.current?.unMute();
+              ytRef.current?.loadVideoById({ videoId, startSeconds: 0 });
+              ytRef.current?.playVideo();
             },
-            // A video pulled, region-locked or embed-disabled. Nothing to
-            // recover to at this point — the deal is already on screen — so
-            // this only surfaces the manual play affordance.
-            onError: () => setBlocked(true),
+            // A video pulled, region-locked or embed-disabled. The deal is
+            // already on screen, so there is no re-dealing it — but the clip
+            // that came with it is right here, and a fatal code means the
+            // video will not play on a retry either. Retire it and swap.
+            onError: (event) => {
+              const source = currentRef.current;
+              // Nothing on air — a late error from a song the run has already
+              // stopped. There is nothing to swap to and nothing to retry.
+              if (!source) return;
+              const videoId = source.videoId;
+              if (FATAL_ERRORS.has(event.data) && videoId && source.previewUrl) {
+                deadVideosRef.current.add(videoId);
+                // Before "Go!" this is `unlock`'s muted priming failing, and
+                // `play` will route to the clip on its own once the id is
+                // retired. Mid-song it has to be swapped now.
+                if (liveRef.current) playPreview(source);
+                return;
+              }
+              setBlocked(true);
+            },
             // 1 is PLAYING. Sound is provably coming out, so retire the manual
             // play chip whatever an earlier error or refusal implied.
             onStateChange: (event) => {
@@ -222,7 +326,13 @@ export function useRushPlayer(): RushPlayer {
         });
       })
       .catch(() => {
-        // No iframe API: every song plays its preview clip instead.
+        // No iframe API: every song plays its preview clip instead. A song
+        // queued against a player that is never coming would otherwise wait
+        // out the whole run in silence, so it is redirected here.
+        ytFailedRef.current = true;
+        const queued = pendingRef.current;
+        clearPending();
+        if (queued && liveRef.current) playPreview(queued);
       });
 
     return () => {
@@ -239,7 +349,7 @@ export function useRushPlayer(): RushPlayer {
       // loaded and the bare div is still sitting there.
       host.remove();
     };
-  }, []);
+  }, [clearPending, playPreview, usableVideo]);
 
   const stop = useCallback(() => {
     const audio = audioRef.current;
@@ -247,7 +357,8 @@ export function useRushPlayer(): RushPlayer {
       audio.pause();
       audio.removeAttribute('src');
     }
-    pendingRef.current = null;
+    clearPending();
+    currentRef.current = null;
     liveRef.current = false;
     if (ytReadyRef.current) {
       try {
@@ -256,39 +367,41 @@ export function useRushPlayer(): RushPlayer {
         // Torn down mid-run; nothing to stop.
       }
     }
-  }, []);
+  }, [clearPending]);
 
   const play = useCallback(
     (source: RushSource) => {
       stop();
       liveRef.current = true;
+      currentRef.current = source;
 
-      if (source.videoId) {
-        if (ytReadyRef.current && ytRef.current) {
-          // `unlock` leaves the player muted so its priming play can't leak
-          // over the countdown. This is the moment sound is actually wanted.
-          ytRef.current.unMute();
-          ytRef.current.loadVideoById({ videoId: source.videoId, startSeconds: 0 });
-          ytRef.current.playVideo();
-        } else {
-          // Still loading. `onReady` picks this up.
-          pendingRef.current = source.videoId;
-        }
+      const videoId = usableVideo(source);
+      if (!videoId) {
+        playPreview(source);
         return;
       }
 
-      if (!source.previewUrl) return;
-      const audio = getAudio();
-      if (audio.src !== source.previewUrl) audio.src = source.previewUrl;
-      audio.currentTime = 0;
-      // Autoplay policies can still refuse after all our taps — a reload
-      // mid-run, mostly. The play button on the bar is the escape hatch.
-      audio
-        .play()
-        .then(() => setBlocked(false))
-        .catch(() => setBlocked(true));
+      if (ytReadyRef.current && ytRef.current) {
+        // `unlock` leaves the player muted so its priming play can't leak
+        // over the countdown. This is the moment sound is actually wanted.
+        ytRef.current.unMute();
+        ytRef.current.loadVideoById({ videoId, startSeconds: 0 });
+        ytRef.current.playVideo();
+        return;
+      }
+
+      // Still loading. `onReady` picks this up — and if it doesn't, the song
+      // falls back to its clip rather than waiting out the run.
+      pendingRef.current = source;
+      pendingTimer.current = setTimeout(() => {
+        pendingTimer.current = null;
+        const queued = pendingRef.current;
+        pendingRef.current = null;
+        if (!queued || !liveRef.current) return;
+        playPreview(queued);
+      }, READY_GRACE_MS);
     },
-    [stop, getAudio],
+    [stop, usableVideo, playPreview],
   );
 
   /**
@@ -301,8 +414,12 @@ export function useRushPlayer(): RushPlayer {
     (source: RushSource) => {
       setBlocked(false);
       liveRef.current = false;
+      // Priming failures land in `onError`, which needs to know which song it
+      // is retiring.
+      currentRef.current = source;
 
-      if (ytReadyRef.current && ytRef.current && source.videoId) {
+      const videoId = usableVideo(source);
+      if (ytReadyRef.current && ytRef.current && videoId) {
         try {
           // The song has to be loaded before it can be played: calling
           // `playVideo` on an empty player is an error, and that error used to
@@ -313,7 +430,7 @@ export function useRushPlayer(): RushPlayer {
           // during the countdown gives the answer away before the clock even
           // starts. `play` unmutes at "Go!".
           ytRef.current.mute();
-          ytRef.current.loadVideoById({ videoId: source.videoId, startSeconds: 0 });
+          ytRef.current.loadVideoById({ videoId, startSeconds: 0 });
           ytRef.current.playVideo();
           ytRef.current.pauseVideo();
         } catch {
@@ -337,7 +454,7 @@ export function useRushPlayer(): RushPlayer {
           .catch(() => setBlocked(true));
       }
     },
-    [getAudio],
+    [getAudio, usableVideo],
   );
 
   return { blocked, play, stop, unlock };
