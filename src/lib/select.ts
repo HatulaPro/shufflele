@@ -23,14 +23,14 @@ import type { Track } from './types';
  * Every constant is a dial on "how strongly does popularity decide this".
  * Sharper bias means lowering TEMPERATURE, not raising anything else.
  */
-const TEMPERATURE = 6;
-const MAX_DEFICIT = 50;
-const UNIFORM_MIX = 0.07;
+const TEMPERATURE = 9;
+const MAX_DEFICIT = 40;
+const UNIFORM_MIX = 0.1;
 const REF_QUANTILE = 0.86;
 
 /**
  * Uniform in [0, 1). Six bytes is 2^48 buckets — far more resolution than the
- * widest weight ratio here (~4200:1) can use, and it divides exactly, so there's
+ * widest weight ratio here (~85:1) can use, and it divides exactly, so there's
  * no modulo bias to argue about.
  */
 function randomFloat(): number {
@@ -56,9 +56,9 @@ function quantile(sortedAsc: number[], q: number): number {
  * formula behave differently per playlist without any per-playlist tuning:
  *
  * - a playlist of global hits spans maybe 75–92, so the least likely song is
- *   only e^2.5 ≈ 12x behind the top — still a broad draw;
- * - an alternative playlist spans 5–65, so its deep cuts sit 50 points down
- *   and get crushed by orders of magnitude.
+ *   only e^1.9 ≈ 7x behind the top — very nearly an even draw;
+ * - an alternative playlist spans 5–65, so its deep cuts sit 60 points down
+ *   and land on the clamp, an order of magnitude behind.
  *
  * The reference point is the 86th percentile rather than the max, so the whole
  * top seventh ties for maximum weight. A 200-song playlist therefore has a head
@@ -83,9 +83,11 @@ function weightsFor(playlist: Track[]): number[] {
 
   return playlist.map((track) => {
     const p = typeof track.popularity === 'number' ? track.popularity : fallback;
-    // Clamped so nothing is more than e^8.3 ≈ 4200x behind the head. At this
-    // temperature the clamp no longer does much on its own — what actually
-    // keeps the bottom of a wide playlist reachable is UNIFORM_MIX.
+    // Clamped so nothing is more than e^4.4 ≈ 85x behind the head. On a wide
+    // playlist the clamp binds for real — everything past 40 points down ties
+    // for minimum weight — but UNIFORM_MIX is still what does most of the work
+    // of keeping the tail reachable: at 40 points down the hatch is already
+    // ~90% of a song's chance of being drawn, and no temperature reaches it.
     const deficit = Math.min(Math.max(ref - p, 0), MAX_DEFICIT);
     return Math.exp(-deficit / TEMPERATURE);
   });
@@ -227,11 +229,17 @@ export function pickSecret(
   const groups = groupBy(eligible, contributorKey);
   const playlist = pickUniform(leastServed(groups, played));
 
-  // Roughly one round in fourteen ignores popularity entirely. This is the
-  // answer to "don't play the same handful of songs out of a 200-song
-  // playlist" that doesn't cost any state: within a lobby the exclusion already
-  // drains the head, and across lobbies this keeps the head from being the
-  // only thing anyone ever hears.
+  // Roughly one round in ten ignores popularity entirely. This is the answer
+  // to "don't play the same handful of songs out of a 200-song playlist" that
+  // doesn't cost any state: within a lobby the exclusion already drains the
+  // head, and across lobbies this keeps the head from being the only thing
+  // anyone ever hears.
+  //
+  // It is also the only dial the deep tail can feel. A song far enough below
+  // its playlist's head has a weight small enough that the hatch dominates its
+  // draw, so raising this lifts the whole tail by a flat factor, the same on
+  // every playlist shape, where lowering TEMPERATURE would only flatten the
+  // head to get there.
   if (randomFloat() < UNIFORM_MIX) return pickUniform(playlist);
 
   return weightedPick(playlist, weightsFor(playlist));

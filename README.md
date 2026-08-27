@@ -136,8 +136,8 @@ Personal playlists sit far below it.
 ### Picking the secret song
 
 [`src/lib/select.ts`](src/lib/select.ts) draws a contributor, then a track of theirs weighted
-by `exp(-deficit / 6)` — where `deficit` is how far that track's popularity sits below its **own
-playlist's** 86th percentile, clamped to 50 points. One round in fourteen skips the weighting
+by `exp(-deficit / 9)` — where `deficit` is how far that track's popularity sits below its **own
+playlist's** 86th percentile, clamped to 40 points. One round in ten skips the weighting
 entirely and draws uniformly.
 
 The outer draw is a bag shuffle: only contributors tied for the fewest rounds so far are in the
@@ -148,9 +148,15 @@ Fairness is per person, not per playlist.
 
 Weighting the gap rather than the raw score is the whole trick. A playlist of wall-to-wall hits
 spans ~75–92, so everything in it stays in play; an alternative playlist spans ~5–65, so its
-deep cuts are ~4200x rarer than its singles without anyone tuning a knob per playlist. Nothing becomes
+deep cuts are ~85x rarer than its singles without anyone tuning a knob per playlist. Nothing becomes
 unreachable, and no state is written anywhere — within a lobby the used-track list already drains
 the popular head, and the uniform mixture covers the rest.
+
+The two are not interchangeable dials. The temperature governs the middle of a playlist — the
+songs 10–25 points below the head, which is where "the same twenty songs keep coming up" actually
+lives. Past roughly 30 points down a song's weight is small enough that the uniform mixture is
+most of its chance of being drawn, so the tail can only be lifted by that mixture, and lifting it
+there costs the head a tenth of its share instead of flattening the whole curve.
 
 A track whose payload omitted `popularity` counts as its playlist's median rather than a zero, so
 it costs you the difficulty label, not the song.
