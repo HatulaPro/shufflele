@@ -2,7 +2,7 @@ import type { NextRequest, NextResponse } from 'next/server';
 import { fail, json } from '@/lib/http';
 import { loadRound, loadTracks, poolFor, requireHost, saveRound } from '@/lib/lobby';
 import { findLyricHint, noLyricLine } from '@/lib/lyrics';
-import { artistsLabel, buildLadder, tierFor, toPublicRound } from '@/lib/round';
+import { artistsLabel, buildLadder, songKey, tierFor, toPublicRound } from '@/lib/round';
 import { missingStems } from '@/lib/separation';
 import type { GuessLog } from '@/lib/types';
 
@@ -59,9 +59,6 @@ export async function POST(req: NextRequest, ctx: Ctx): Promise<NextResponse> {
   } else {
     const trackId = typeof body.trackId === 'string' ? body.trackId : '';
     if (!trackId) return fail('No track was given.', 400);
-    if (round.guesses.some((g) => g.trackId === trackId)) {
-      return fail('That track has already been guessed.', 400);
-    }
 
     // Judged against this round's roster, the same one the guess list was built
     // from — a playlist that joined mid-song isn't guessable yet, and a removed
@@ -70,6 +67,14 @@ export async function POST(req: NextRequest, ctx: Ctx): Promise<NextResponse> {
     const guessed = pool.find((t) => t.spotifyId === trackId);
     const result = tierFor(trackId, round.secret, pool);
     if (!guessed || !result) return fail('That track is not in this game.', 400);
+
+    // Match already-guessed on the *song*, not the spotifyId, so a twin release
+    // can't be tapped separately: "Hello" (single) and "Hello" (album) are one
+    // row in the modal and one guess, whichever id the row kept.
+    const guessedKey = songKey(guessed.title, artistsLabel(guessed));
+    if (round.guesses.some((g) => g.kind !== 'skip' && g.title && songKey(g.title, g.artist ?? '') === guessedKey)) {
+      return fail('That track has already been guessed.', 400);
+    }
 
     entry = {
       row,

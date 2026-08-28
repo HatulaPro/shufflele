@@ -2,7 +2,7 @@ import type { NextRequest, NextResponse } from 'next/server';
 import { fail, json } from '@/lib/http';
 import { liveRound, loadTracks, poolFor, requireHost } from '@/lib/lobby';
 import { normalize } from '@/lib/normalize';
-import { artistsLabel } from '@/lib/round';
+import { artistsLabel, trackSongKey } from '@/lib/round';
 import type { Candidate } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
@@ -23,14 +23,21 @@ export async function GET(_req: NextRequest, ctx: Ctx): Promise<NextResponse> {
   // playlist added mid-song must not quietly widen the answer set, and one the
   // host removed has to stay guessable until the song is over.
   const pool = poolFor(auth.lobby, await loadTracks(code), liveRound(auth.lobby));
+  // Dedupe on the *song*, not the spotifyId: two releases of the same song
+  // (remaster, single vs. album, explicit vs. clean) carry different ids but
+  // render identically in the modal, so collapsing them on the normalised
+  // title + artist is what makes the list read as the music, not the
+  // catalogue. Matching is exact on the normalised names, never fuzzy, and
+  // the same key tiers a collapsed twin guess as a win (lib/round.ts).
   const seen = new Set<string>();
   const candidates: Candidate[] = [];
 
   for (const track of pool) {
-    if (seen.has(track.spotifyId)) continue;
-    seen.add(track.spotifyId);
-
     const artist = artistsLabel(track);
+    const key = trackSongKey(track);
+    if (seen.has(key)) continue;
+    seen.add(key);
+
     candidates.push({
       id: track.spotifyId,
       title: track.title,
