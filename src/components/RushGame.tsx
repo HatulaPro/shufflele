@@ -8,9 +8,12 @@ import type { PublicRush, RushSongRef } from '@/lib/types';
 
 type Props = {
   code: string;
-  closing: boolean;
-  onClose: () => void;
-  /** Finish screen only: back to the lobby without tearing it down. */
+  /**
+   * Back to the lobby. Every way out of Rush leads there and only there —
+   * closing the lobby for good is the lobby screen's own button, one screen
+   * further out, which is what keeps "I'm done with this run" and "we're done
+   * playing" from sitting next to each other wearing the same weight.
+   */
   onBack: () => void;
 };
 
@@ -66,7 +69,7 @@ function formatClock(ms: number): string {
  * And when a response disagrees with what we played — no warm deal was in
  * hand, or the run diverged — the server's version wins and goes on air.
  */
-export default function RushGame({ code, closing, onClose, onBack }: Props) {
+export default function RushGame({ code, onBack }: Props) {
   const [phase, setPhase] = useState<Phase>('loading');
   const [rush, setRush] = useState<PublicRush | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -594,9 +597,7 @@ export default function RushGame({ code, closing, onClose, onBack }: Props) {
         newBest={newBest}
         busy={busy}
         error={error}
-        closing={closing}
         onPlayAgain={playAgain}
-        onClose={onClose}
         onBack={backToLobby}
       />
     );
@@ -622,18 +623,17 @@ export default function RushGame({ code, closing, onClose, onBack }: Props) {
               {COUNT_STEPS[Math.min(countStep, COUNT_STEPS.length - 1)]}
             </p>
           ) : (
-            <button
-              className="btn btn--primary btn--block"
-              onClick={beginRun}
-              disabled={closing}
-            >
+            <button className="btn btn--primary btn--block" onClick={beginRun}>
               Ready?
             </button>
           )}
 
           {error && <p className="notice notice--error">{error}</p>}
-          <button className="btn btn--quiet btn--block" onClick={onClose} disabled={closing}>
-            End game
+          {/* An un-begun run is the likeliest moment to want the lobby back —
+              a different clock, a different mode, one more playlist — and
+              until now the only button here tore the lobby down instead. */}
+          <button className="btn btn--quiet btn--block" onClick={backToLobby}>
+            Back to lobby
           </button>
         </div>
       </main>
@@ -757,9 +757,7 @@ function FinishScreen({
   newBest,
   busy,
   error,
-  closing,
   onPlayAgain,
-  onClose,
   onBack,
 }: {
   rush: PublicRush;
@@ -767,9 +765,7 @@ function FinishScreen({
   newBest: boolean;
   busy: boolean;
   error: string | null;
-  closing: boolean;
   onPlayAgain: () => void;
-  onClose: () => void;
   onBack: () => void;
 }) {
   const summary = rush.summary ?? { correct: [], wrong: [] };
@@ -821,11 +817,8 @@ function FinishScreen({
         <button className="btn btn--primary btn--block" onClick={onPlayAgain} disabled={busy}>
           {busy ? 'Dealing…' : 'Play again'}
         </button>
-        <button className="btn btn--ghost btn--block" onClick={onBack} disabled={closing}>
+        <button className="btn btn--ghost btn--block" onClick={onBack}>
           Back to lobby
-        </button>
-        <button className="btn btn--quiet btn--block" onClick={onClose} disabled={closing}>
-          {closing ? 'Ending…' : 'End game'}
         </button>
       </div>
     </main>

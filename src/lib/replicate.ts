@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { isMockPredictionId, mockEnabled, mockPrediction, mockPredictionId } from './mock';
 import type { StemName } from './types';
 
 const DEFAULT_MODEL = 'ryan5453/demucs';
@@ -73,6 +74,16 @@ async function latestVersionId(model: string): Promise<string> {
  * SPEC §3.3.
  */
 export async function createSeparation(audioUrl: string, webhookUrl: string): Promise<Prediction> {
+  // The mock split is the only one that isn't really a split: the four parts
+  // were synthesised separately in the first place (lib/mockaudio.ts), so
+  // "separating" them is handing back the URLs they were mixed from. Everything
+  // downstream is unchanged — the prediction is created, the round sits in
+  // `preparing`, and the round route's poll resolves it a couple of seconds
+  // later through `applyPrediction` exactly as a real one resolves.
+  if (mockEnabled()) {
+    return { id: mockPredictionId(audioUrl), status: 'starting' };
+  }
+
   const model = process.env.REPLICATE_DEMUCS_MODEL || DEFAULT_MODEL;
 
   // Replicate refuses a non-HTTPS callback with a 422 that kills the whole
@@ -132,6 +143,11 @@ export async function createSeparation(audioUrl: string, webhookUrl: string): Pr
 }
 
 export async function getPrediction(id: string): Promise<Prediction | null> {
+  if (isMockPredictionId(id)) {
+    const { status, output } = mockPrediction(id);
+    return { id, status, output };
+  }
+
   const res = await fetch(`https://api.replicate.com/v1/predictions/${id}`, {
     headers: { Authorization: `Bearer ${token()}` },
     cache: 'no-store',

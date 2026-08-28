@@ -16,6 +16,7 @@ Copy `.env.example` to `.env.local` and fill it in:
 
 | Variable | Where it comes from |
 |---|---|
+| `NEXT_PUBLIC_SHUFFLELE_MOCK` | Nowhere — set it to `1` to run the whole game on fabricated data, which makes every row in this table except the Upstash pair unnecessary. See [Running it offline](#running-it-offline). |
 | `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | [console.upstash.com](https://console.upstash.com) — create a Redis database, copy the **REST** credentials. |
 | `REPLICATE_API_TOKEN` | [replicate.com/account/api-tokens](https://replicate.com/account/api-tokens) |
 | `REPLICATE_WEBHOOK_SECRET` | [replicate.com/account/webhook](https://replicate.com/account/webhook) — starts with `whsec_`. Optional locally, required in production. |
@@ -29,6 +30,9 @@ Copy `.env.example` to `.env.local` and fill it in:
 npm run dev
 ```
 
+If you only want to *run* it — to see a change, not to play a party — skip most of that
+table and use mock mode: see [Running it offline](#running-it-offline).
+
 Nobody signs into Spotify — not the host, not the guests. There is no OAuth flow anywhere in
 this app. How it reads playlists without one is the interesting part, and it has caveats: see
 [Reading playlists](#reading-playlists).
@@ -37,6 +41,11 @@ Then open the app on the host phone, tap **Create lobby**, and read the six digi
 Guests open the join link, give a name and paste a link to a public playlist of theirs; the pool
 is everyone's music mixed together. **Start game** lights up once one playlist is in.
 
+The host screen is the lobby, and every screen inside a game leads back to it: **Back to lobby**
+off the end of a song or a Rush run, and off the middle of one too, behind a confirmation, since
+a song walked out of does not come back. Closing the lobby for good — freeing the code — is the
+**End game** button on the lobby screen itself, one step further out than any of them.
+
 The door stays open all game. Someone who turns up at song five joins the same way, and the
 **Lobby** button on the host's screen shows who is in, how much music each of them put in, and
 the code to read out again — plus a way to remove anyone but the host, whose phone is running
@@ -44,6 +53,65 @@ the game. Neither kind of change touches the song already playing: a late joiner
 a removed player's both take effect on the next song, so a round's guess list can't shift under
 it. A late joiner enters the fairness draw level with whoever is currently least-served, rather
 than being owed every song they missed.
+
+### Running it offline
+
+Everything the game reads lives behind somebody else's gate: Spotify wants a quota tier
+this project doesn't have, the token that stands in for it is fetched through a
+Cloudflare check that refuses Node, Replicate wants a card, and iTunes, YouTube and
+lyrics.ovh all want a working network at the very least. That left the app effectively
+untestable on a laptop — a round died at the first ingest, and a change to the ladder or
+the Rush board could only really be checked by deploying it.
+
+So set one variable:
+
+```bash
+NEXT_PUBLIC_SHUFFLELE_MOCK=1
+```
+
+and every one of those is answered locally instead. What you still need is Redis
+(`UPSTASH_REDIS_REST_URL` / `_TOKEN`) — it is reachable from anywhere, and the lobby
+state machine it holds is most of what there is to test, so faking it would remove the
+interesting part.
+
+With it on:
+
+| Normally | With `NEXT_PUBLIC_SHUFFLELE_MOCK=1` |
+|---|---|
+| Playlist ingest, via a borrowed Spotify token | A fabricated playlist, drawn from a 43-song fictional catalogue. **Anything identifies a playlist** — type `rock` — and the same word always makes the same playlist. A real link still works and simply yields a made-up playlist under its id. |
+| iTunes preview lookup | 30 seconds of synthesised audio, served from `/api/mock/audio`. Always matches. |
+| Demucs on Replicate | The four parts were synthesised separately in the first place, so "separating" is handing back the URLs they were mixed from. The prediction still exists, the round still sits in `preparing` for a couple of seconds, and the poll fallback still resolves it. |
+| YouTube play count | A plausible number, anchored on the track's popularity so it agrees with the par beside it. |
+| YouTube Music art track (Rush) | Nothing — `null`, the same answer a real miss gives, so Rush plays its preview clip. Offline that is the *better* sound: a synthesised preview starts at its own first bar, which is the thing art tracks exist to provide. The iframe API isn't loaded either, so a mock run makes no outbound request at all. |
+| lyrics.ovh | Stand-in lines, put through the same give-away filter, so the final row's hint is real. |
+| Album art from Spotify's CDN | A cover drawn per track at `/api/mock/art` — a gradient keyed to the id, with the title and artist on it. |
+| 10 rounds a day | 1,000. The cap bounds a GPU bill, and there is no GPU. `GAMES_PER_DAY` still wins, which is how you test the limit screen (set it to `1`). |
+| The Spotify embed on the reveal | A placeholder. A fabricated id would render Spotify's "content unavailable" panel, which reads as a broken app rather than a fake song. |
+
+The catalogue is chosen to have the shapes the game cares about rather than songs anyone
+knows: popularity spans 4–96 so every difficulty tier and the whole selection weighting
+get exercised, artists own several songs each so the `artist` guess tier fires, several
+titles carry `- Remastered` / `(feat. …)` / `- Live` decorations, and three are in Hebrew
+— a Latin-only pool hides every bug in `normalize` and in the guess search.
+
+The audio is worth a word, since a mock that plays silence would take most of the game
+with it. [`src/lib/mockaudio.ts`](src/lib/mockaudio.ts) writes four genuinely different
+instrument parts of the same 30-second song — kick and snare, a walking bass, a chord pad
+with an arpeggio over it, and a melody — deriving the key, tempo and tune from the track
+id, so a song sounds the same every time and two songs on one Rush board don't. That is
+what makes the ladder mean anything (the rows really do add an instrument each), and it
+clears the checks that would otherwise quietly shorten it: the host's browser rejects any
+stem under −45 dBFS and the server drops any stem file under 4 KB. They render around
+−15 dBFS. WAV rather than mp3, because a WAV is a header and a block of samples and this
+is the only thing in the project that would have needed an encoder.
+
+Two things it deliberately can't show you. A track with no preview anywhere is
+unreachable — the mocked iTunes always matches — so the path that retires a track for the
+life of a lobby needs the real APIs. And the mock separation always succeeds, so `failed`
+rounds do too.
+
+Everything is off unless the variable is set, and it is ignored outright when
+`VERCEL_ENV=production`.
 
 ### Reading playlists
 
@@ -87,9 +155,11 @@ Worth knowing before relying on any of this:
   still be broken.
 - **`SPOTIFY_CLIENT_ID`/`SECRET` are the way out.** If this deployment's own app ever gets extended
   quota mode, set them: they are tried first, and none of the above is reached.
-- **Local development needs `SPOTIFY_TOKEN_OVERRIDE`.** `next dev` emulates the Edge runtime on
-  Node, so the broker is unreachable locally by the same TLS check. Paste an hour-long token in by
-  hand; the curl command is in `.env.example`.
+- **Local development needs `SPOTIFY_TOKEN_OVERRIDE`** — or mock mode. `next dev` emulates the
+  Edge runtime on Node, so the broker is unreachable locally by the same TLS check. To read a real
+  playlist, paste an hour-long token in by hand; the curl command is in `.env.example`. To just run
+  the game, see [Running it offline](#running-it-offline), where no Spotify token is involved at
+  all.
 - **To check a deployment**, `GET` the Edge route with the internal secret. It reports the raw
   outcome of the broker call — including whether Cloudflare served its challenge page — without
   returning the token:
@@ -170,17 +240,27 @@ webhook in production. Set `REPLICATE_POLL_FALLBACK=0` to turn it off.
 
 ### Rush mode
 
-Creating a lobby now asks for a mode first. **Classic** is everything above; **Rush** is a
+Creating a lobby asks for a mode first, and the lobby screen can change it afterwards. A room
+that wants to switch keeps its code, its players and its pooled music — nobody re-joins, nobody
+pastes a playlist again — because a mode is a setting on a lobby and never was the thing that
+made two lobbies different. All a switch ends is the screen the other mode had open: a Rush run
+runs against a wall-clock deadline and cannot be picked up an hour later, and a classic song the
+host has walked out of is spent either way. Everything both modes read survives it, including
+the two used/unusable lists, which are kept apart per mode precisely because a track that is
+dead to one is routinely fine in the other.
+
+**Classic** is everything above; **Rush** is a
 beat-the-clock sprint for whoever is holding the host phone: songs play from t=0 (no Demucs, no
 stems, no daily cap — a song costs a couple of metadata lookups and nothing else), and the
-player clicks the one that's playing out of ten candidates drawn from the pooled playlists. Three lives; a miss costs one and moves straight on; a hit scores and moves straight
-on. Time controls are 30 seconds, a minute, or endless.
+player clicks the one that's playing out of eight candidates drawn from the pooled playlists. Three lives; a miss costs one and moves straight on; a hit scores and moves straight
+on. Time controls are a minute, two minutes, or endless.
 
 Song selection reuses `pickSecret` — least-served contributor first, popularity-weighted inside
 their tracks — whenever more than one playlist is in the pool, and drops to fully uniform when
 there's only one, where the fairness machinery has nobody to be fair to. Songs may repeat; over
-a minute-long clock an exclusion list would only be state to forget. Rush needs ten different
-songs in the pool to fill a board, and tracks with no preview are retired into the lobby's
+a minute-long clock an exclusion list would only be state to forget. Rush needs eight different
+songs in the pool to fill a board — below that the lobby screen greys the mode out rather than
+letting the host find out by tapping start — and tracks with no preview are retired into the lobby's
 unusable list on the way past, exactly as classic rounds retire them. Which of the ten options is
 the answer never leaves the server, same rule as the classic guess route — the phone is playing
 in front of a room. The high score lives in localStorage on the host phone, per time control,

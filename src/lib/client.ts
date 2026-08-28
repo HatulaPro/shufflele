@@ -1,3 +1,13 @@
+/**
+ * True when the app is running on fabricated data (lib/mock.ts).
+ *
+ * Lives here rather than being imported from lib/mock.ts because this one is
+ * read in the browser, and that module is server-only — it renders WAV files
+ * into node Buffers. The variable has to carry the `NEXT_PUBLIC_` prefix for
+ * the same reason: nothing else reaches the client bundle.
+ */
+export const MOCK = process.env.NEXT_PUBLIC_SHUFFLELE_MOCK === '1';
+
 /** A failed response, carrying the status so callers can tell 409 from 500. */
 export class ApiError extends Error {
   readonly status: number;

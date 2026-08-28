@@ -4,7 +4,6 @@ import { fail, json } from '@/lib/http';
 import { requireHost, saveLobby, settleRoster } from '@/lib/lobby';
 import { claimRushStart, consumeRushCredit, refundRushCredit } from '@/lib/ratelimit';
 import {
-  MIN_RUSH_POOL,
   dealRushSong,
   freshRush,
   retire,
@@ -12,6 +11,7 @@ import {
   toPublicRush,
   warmNextRushSong,
 } from '@/lib/rush';
+import { MIN_RUSH_POOL } from '@/lib/types';
 import type { RushTimeControl } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
@@ -42,8 +42,11 @@ export async function POST(req: NextRequest, ctx: Ctx): Promise<NextResponse> {
     return fail('That was quick — give it a few seconds before starting another run.', 429);
   }
 
-  if ((lobby.mode ?? 'classic') !== 'rush') {
-    return fail('This lobby was created for the classic game.', 409);
+  if (lobby.mode !== 'rush') {
+    // Not "this lobby was created for classic": the mode is a setting a room
+    // can change (see the PATCH in ../../route.ts), so the only way to get
+    // here is a host tapping start as another tab flips the toggle.
+    return fail('This lobby is set to the classic game right now.', 409);
   }
 
   let body: { timeControl?: unknown };
@@ -59,7 +62,14 @@ export async function POST(req: NextRequest, ctx: Ctx): Promise<NextResponse> {
   }
   const timeControl: RushTimeControl = raw === 0 ? null : (raw as 60 | 120);
 
-  const pool = await settleRoster(lobby, Math.max(lobby.currentRound, 1));
+  // The round a run belongs to is the *next* one, exactly as in the classic
+  // start route — not `currentRound`, which names the song that already
+  // played. The distinction was academic while a lobby was one mode for life,
+  // since `currentRound` was then always 0 here; now that a room can arrive
+  // from a classic game it decides real things, and reading it the old way
+  // would deal a board that still contains a removed player's music and none
+  // of a player who joined during the last song.
+  const pool = await settleRoster(lobby, lobby.currentRound + 1);
   if (pool.length === 0) {
     return fail('Nobody has added a playlist yet.', 400);
   }

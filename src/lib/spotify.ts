@@ -1,5 +1,6 @@
 import { headers } from 'next/headers';
 import { type BrokeredToken, fetchBrokeredToken } from './broker';
+import { mockEnabled, mockIngest, mockPlaylistId } from './mock';
 import { PLAYLIST_TTL_SECONDS, TOKEN_SLACK_SECONDS, keys, redis } from './redis';
 import { baseUrl } from './replicate';
 import type { Artist, Track } from './types';
@@ -59,6 +60,11 @@ export function parsePlaylistId(input: string): string | null {
   );
   if (url) return url[1];
 
+  // Mock mode lets anything at all name a playlist, so a tester can type
+  // "rock" instead of hunting for a link. Tried last, so a real link still
+  // parses to its real id and simply gets a fabricated playlist under it.
+  if (mockEnabled()) return mockPlaylistId(text);
+
   return null;
 }
 
@@ -80,6 +86,10 @@ export async function ingestPlaylist(
   playlistId: string,
   contributor: string,
 ): Promise<IngestedPlaylist> {
+  // No token, no network, and no cache: the fabricated playlist is a pure
+  // function of the id, so there is nothing for two callers to share.
+  if (mockEnabled()) return mockIngest(playlistId, contributor);
+
   const cached = await readPlaylistCache(playlistId);
   if (cached) {
     return {

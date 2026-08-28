@@ -1,3 +1,4 @@
+import { mockEnabled, mockLyrics } from './mock';
 import { coreTitle, normalize, plainTitle } from './normalize';
 import type { Track } from './types';
 
@@ -101,9 +102,17 @@ export async function findLyricHint(track: Track): Promise<string | null> {
   const artist = track.artists[0]?.name;
   if (!artist) return null;
 
-  let lyrics = await fetchLyrics(artist, track.title);
-  const stripped = plainTitle(track.title);
-  if (!lyrics && stripped !== track.title) lyrics = await fetchLyrics(artist, stripped);
+  // Mock mode substitutes the fetch and nothing else: the stand-in lines go
+  // through exactly the same filtering below, including the give-away check,
+  // which is the part of this with rules in it.
+  let lyrics: string | null;
+  if (mockEnabled()) {
+    lyrics = mockLyrics(track);
+  } else {
+    lyrics = await fetchLyrics(artist, track.title);
+    const stripped = plainTitle(track.title);
+    if (!lyrics && stripped !== track.title) lyrics = await fetchLyrics(artist, stripped);
+  }
   if (!lyrics) return null;
 
   const banned = bannedWords(track);

@@ -8,9 +8,12 @@ import PlayerList from '@/components/PlayerList';
 import Round from '@/components/Round';
 import RushGame from '@/components/RushGame';
 import { api } from '@/lib/client';
-import type { PublicLobby } from '@/lib/types';
+import { MIN_RUSH_POOL } from '@/lib/types';
+import type { LobbyMode, PublicLobby } from '@/lib/types';
 
 const TIME_CONTROL_KEY = 'shufflele:rush-time-control';
+
+const MODE_LABEL: Record<LobbyMode, string> = { classic: 'Classic', rush: 'Rush' };
 
 export default function HostGame({ code }: { code: string }) {
   const router = useRouter();
@@ -25,6 +28,8 @@ export default function HostGame({ code }: { code: string }) {
   const [removing, setRemoving] = useState<string | null>(null);
   /** Kept apart from `loadError`, which swaps out the whole screen. */
   const [removeError, setRemoveError] = useState<string | null>(null);
+  /** Which mode the toggle is mid-flight to, so both halves can go quiet. */
+  const [switching, setSwitching] = useState<LobbyMode | null>(null);
   const [origin, setOrigin] = useState('');
   /** Rush mode: seconds on the clock, 0 = infinite. A default beats making everyone read three options.
       The last pick sticks around on this phone — hosts tend to run the same clock every night. */
@@ -40,9 +45,12 @@ export default function HostGame({ code }: { code: string }) {
   };
   /** Set once a Rush game exists — covers both starting one and resuming after a refresh. */
   const [rushActive, setRushActive] = useState(false);
-  /** The lobby keeps `currentRound` set after a round ends, so the resume below
-      must only ever fire once — otherwise leaving a round bounces straight back
-      into it on the next poll. */
+  /**
+   * Auto-resume fires at most once per mount. After that this phone's own
+   * navigation is the authority: a host who just walked back to the lobby must
+   * not be dragged into the song again by the poll that follows — including
+   * when the request that cleared the flag server-side didn't land.
+   */
   const resumed = useRef(false);
 
   useEffect(() => setOrigin(window.location.origin), []);
@@ -60,14 +68,18 @@ export default function HostGame({ code }: { code: string }) {
         if (!alive) return;
         setLobby(next);
         setLoadError(null);
-        // Resume an in-flight round after a refresh.
-        if (!resumed.current && next.currentRound > 0) {
-          resumed.current = true;
-          setRoundNumber(next.currentRound);
-        }
-        if (!resumed.current && next.mode === 'rush' && next.rushActive) {
-          resumed.current = true;
-          setRushActive(true);
+        // Resume whatever screen this lobby had open, after a refresh. Both
+        // modes answer the same question — "is one of my screens open?" — off
+        // their own flag; `currentRound` cannot be that flag, because it stays
+        // set for the rest of the lobby's life once a song has played.
+        if (!resumed.current) {
+          if (next.mode === 'classic' && next.activeRound !== null) {
+            resumed.current = true;
+            setRoundNumber(next.activeRound);
+          } else if (next.mode === 'rush' && next.rushActive) {
+            resumed.current = true;
+            setRushActive(true);
+          }
         }
       } catch (err) {
         if (alive) setLoadError(err instanceof Error ? err.message : 'Lost the lobby.');
@@ -105,6 +117,36 @@ export default function HostGame({ code }: { code: string }) {
   }, [code, lobby?.mode, timeControl]);
 
   /**
+   * Moving the room to the other mode. The lobby is the same lobby afterwards —
+   * same code, same players, same pooled music — so nobody re-joins and nobody
+   * pastes a playlist again, which is the whole point of the toggle.
+   *
+   * Only reachable from this screen, which is also why it needs no "are you
+   * sure": a run or a song in progress has its own screen, and getting back
+   * here means the host already left it.
+   */
+  const changeMode = useCallback(
+    async (mode: LobbyMode) => {
+      if (switching || lobby?.mode === mode) return;
+      setSwitching(mode);
+      setStartError(null);
+      try {
+        setLobby(
+          await api<PublicLobby>(`/api/lobby/${code}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ mode }),
+          }),
+        );
+      } catch (err) {
+        setStartError(err instanceof Error ? err.message : 'Could not switch modes.');
+      } finally {
+        setSwitching(null);
+      }
+    },
+    [code, lobby?.mode, switching],
+  );
+
+  /**
    * Nothing has started yet, so a removal here is immediate: the player and
    * their tracks are gone by the time the response lands. Mid-game the same
    * route defers to the next song — see lib/lobby.ts.
@@ -125,10 +167,29 @@ export default function HostGame({ code }: { code: string }) {
   );
 
   /**
+   * Out of the song and back to this screen. The round is spent either way, so
+   * the request is best-effort — `resumed` is what actually keeps the poll from
+   * putting the song back on screen a moment later.
+   */
+  const leaveRound = useCallback(
+    async (n: number) => {
+      resumed.current = true;
+      setRoundNumber(null);
+      try {
+        await api(`/api/lobby/${code}/round/${n}`, { method: 'DELETE' });
+      } catch {
+        // The flag is cleared on the next start anyway; the only cost is a
+        // refresh landing back on a song this phone has already walked out of.
+      }
+    },
+    [code],
+  );
+
+  /**
    * Ending the game closes the lobby outright — the code is freed and this
    * phone lands back on the home screen, where a new one can be created or a
    * code typed in. The navigation happens either way: once the host has said
-   * they're done, a failed DELETE shouldn't strand them in the round.
+   * they're done, a failed DELETE shouldn't strand them here.
    */
   const close = useCallback(async () => {
     setClosing(true);
@@ -141,7 +202,7 @@ export default function HostGame({ code }: { code: string }) {
   }, [code, router]);
 
   if (lobby?.mode === 'rush' && rushActive) {
-    return <RushGame code={code} closing={closing} onClose={close} onBack={() => setRushActive(false)} />;
+    return <RushGame code={code} onBack={() => setRushActive(false)} />;
   }
 
   if (roundNumber !== null) {
@@ -152,9 +213,8 @@ export default function HostGame({ code }: { code: string }) {
         n={roundNumber}
         starting={starting}
         startError={startError}
-        closing={closing}
         onNext={start}
-        onClose={close}
+        onLeave={() => leaveRound(roundNumber)}
       />
     );
   }
@@ -204,6 +264,30 @@ export default function HostGame({ code }: { code: string }) {
     );
   }
 
+  /**
+   * Rush deals a board of {MIN_RUSH_POOL} rows and wants a distinct song behind
+   * every one of them, so a thin pool greys the option out rather than letting
+   * the host find out by tapping start.
+   *
+   * Measured against the pooled track count, which is an over-estimate — the
+   * real gate counts distinct songs, minus whatever Rush has since found
+   * unplayable. Reading it exactly would mean pulling the whole tracklist down
+   * every two seconds for a button's disabled attribute, which is a megabyte a
+   * poll to catch a lobby whose playlists are near-identical *and* tiny. The
+   * start route still checks properly, and says what's missing.
+   */
+  const rushReady = lobby.trackCount >= MIN_RUSH_POOL;
+  const played = lobby.currentRound > 0;
+  const startLabel = starting
+    ? lobby.mode === 'rush'
+      ? 'Dealing…'
+      : 'Picking a song…'
+    : lobby.mode === 'rush'
+      ? 'Start rush'
+      : played
+        ? 'Next song'
+        : 'Start game';
+
   return (
     <main className="shell">
       <div className="row-between">
@@ -244,6 +328,29 @@ export default function HostGame({ code }: { code: string }) {
       {startError && <p className="notice notice--error">{startError}</p>}
 
       <div className="stack stack--tight" style={{ marginTop: 'auto' }}>
+        <div className="field">
+          <span className="label">Mode</span>
+          <div className="seg seg--two" role="radiogroup" aria-label="Game mode">
+            {(['classic', 'rush'] as const).map((mode) => (
+              <button
+                key={mode}
+                role="radio"
+                aria-checked={lobby.mode === mode}
+                className={`seg__btn ${lobby.mode === mode ? 'seg__btn--on' : ''}`}
+                onClick={() => changeMode(mode)}
+                disabled={switching !== null || starting || (mode === 'rush' && !rushReady)}
+              >
+                {switching === mode ? <span className="spinner" /> : MODE_LABEL[mode]}
+              </button>
+            ))}
+          </div>
+          {!rushReady && (
+            <p className="tiny">
+              Rush needs {MIN_RUSH_POOL} songs in the pool to fill a board. Add another playlist.
+            </p>
+          )}
+        </div>
+
         {lobby.mode === 'rush' && (
           <div className="field">
             <span className="label">Time control</span>
@@ -274,21 +381,21 @@ export default function HostGame({ code }: { code: string }) {
         <button
           className="btn btn--primary btn--block"
           onClick={start}
-          disabled={!lobby.canStart || starting}
+          disabled={!lobby.canStart || starting || switching !== null}
         >
-          {starting
-            ? lobby.mode === 'rush'
-              ? 'Dealing…'
-              : 'Picking a song…'
-            : lobby.mode === 'rush'
-              ? 'Start rush'
-              : 'Start game'}
+          {startLabel}
         </button>
         {!lobby.canStart && (
           <p className="tiny" style={{ textAlign: 'center' }}>
             Waiting for at least one playlist.
           </p>
         )}
+        {/* The one place the lobby can actually be closed. Every screen inside a
+            game now comes back here instead of ending it, so the door out of the
+            whole thing belongs on the screen those doors lead to. */}
+        <button className="btn btn--quiet btn--block" onClick={close} disabled={closing}>
+          {closing ? 'Ending…' : 'End game'}
+        </button>
       </div>
     </main>
   );

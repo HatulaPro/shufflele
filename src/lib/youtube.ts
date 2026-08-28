@@ -1,3 +1,4 @@
+import { mockEnabled, mockPlayCount } from './mock';
 import { coreTitle, looseSimilarity, normalize, plainTitle } from './normalize';
 import type { Track } from './types';
 
@@ -69,6 +70,10 @@ type VideoItem = {
  * watched", and it's stable between lookups in a way that a sum is not.
  */
 export async function findPlayCount(track: Track): Promise<number | null> {
+  // A plausible number rather than null, so the chip renders and its rounding
+  // gets exercised. Anchored on popularity, so it agrees with the par beside it.
+  if (mockEnabled()) return mockPlayCount(track);
+
   const key = process.env.YOUTUBE_API_KEY;
   const artist = track.artists[0]?.name;
   if (!key || !artist) return null;

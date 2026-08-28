@@ -1,7 +1,7 @@
 import { after } from 'next/server';
 import type { NextRequest, NextResponse } from 'next/server';
 import { fail, json } from '@/lib/http';
-import { loadTracks, requireHost, saveLobby } from '@/lib/lobby';
+import { loadTracks, poolFor, requireHost, saveLobby } from '@/lib/lobby';
 import {
   awardRushTime,
   dealRushSong,
@@ -72,9 +72,13 @@ export async function POST(req: NextRequest, ctx: Ctx): Promise<NextResponse> {
   if (rush.lives <= 0) {
     rush.over = true;
   } else {
+    // Through the roster, and through the same round the run was dealt from —
+    // otherwise this fallback path draws on a wider pool than the warm-up
+    // beside it, and whether a given song can come up depends on which of the
+    // two happened to serve it.
     const dealt = await dealRushSong(
       rush,
-      await loadTracks(code),
+      poolFor(lobby, await loadTracks(code), lobby.currentRound + 1),
       lobby.rushUnusableTrackIds ?? [],
     );
     retire(lobby, dealt.unusable, dealt.previewless);

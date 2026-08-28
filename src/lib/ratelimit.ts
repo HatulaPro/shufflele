@@ -1,3 +1,4 @@
+import { mockEnabled } from './mock';
 import {
   RATELIMIT_TTL_SECONDS,
   RUSH_START_COOLDOWN_SECONDS,
@@ -8,7 +9,12 @@ import {
 
 export function gamesPerDay(): number {
   const configured = Number.parseInt(process.env.GAMES_PER_DAY ?? '', 10);
-  return Number.isFinite(configured) && configured > 0 ? configured : 10;
+  if (Number.isFinite(configured) && configured > 0) return configured;
+  // The default exists to bound a GPU bill, and mock mode has no GPU behind
+  // it — ten rounds is about twenty minutes of testing before the app starts
+  // refusing to play. An explicit GAMES_PER_DAY still wins, which is how the
+  // limit screen itself gets tested (set it to 1).
+  return mockEnabled() ? 1000 : 10;
 }
 
 export type RateLimitResult = { allowed: boolean; used: number; limit: number };
@@ -50,7 +56,10 @@ export async function creditsUsed(): Promise<number> {
  */
 export function rushGamesPerDay(): number {
   const configured = Number.parseInt(process.env.RUSH_GAMES_PER_DAY ?? '', 10);
-  return Number.isFinite(configured) && configured > 0 ? configured : 50;
+  if (Number.isFinite(configured) && configured > 0) return configured;
+  // Same reasoning as `gamesPerDay`: offline there are no endpoints whose
+  // goodwill this is protecting.
+  return mockEnabled() ? 1000 : 50;
 }
 
 /** Counted per started run, the same shape as `consumeGameCredit`. */

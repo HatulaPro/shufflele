@@ -1,3 +1,4 @@
+import { mockEnabled, mockItunesMatch } from './mock';
 import { coreTitle, looseSimilarity, normalize } from './normalize';
 import type { Track } from './types';
 
@@ -110,6 +111,12 @@ async function searchItunes(term: string, country: string | null): Promise<Itune
  * never clear the threshold below.
  */
 export async function findItunesMatch(track: Track): Promise<ItunesMatch | null> {
+  // Mock mode always matches, with 30 seconds of synthesised audio. Matching
+  // is the one thing that can't fail offline, so the "no preview anywhere"
+  // path — which retires a track for the life of the lobby — is unreachable
+  // here; test that by pointing a lobby at the real APIs.
+  if (mockEnabled()) return mockItunesMatch(track);
+
   const artist = track.artists[0]?.name ?? '';
   const term = `${artist} ${track.title}`;
 

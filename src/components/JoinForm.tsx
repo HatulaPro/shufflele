@@ -1,7 +1,7 @@
 'use client';
 
 import { type FormEvent, useState } from 'react';
-import { api } from '@/lib/client';
+import { MOCK, api } from '@/lib/client';
 
 export type JoinResult = {
   playlistName: string;
@@ -65,14 +65,14 @@ export default function JoinForm({ code, onJoined, submitLabel = 'Send it in', d
 
       <div className="field">
         <label className="label" htmlFor="playlist-url">
-          Public Spotify playlist link
+          {MOCK ? 'Playlist' : 'Public Spotify playlist link'}
         </label>
         <input
           id="playlist-url"
           className="input"
           value={playlistUrl}
           onChange={(e) => setPlaylistUrl(e.target.value)}
-          placeholder="https://open.spotify.com/playlist/…"
+          placeholder={MOCK ? 'anything — try "rock"' : 'https://open.spotify.com/playlist/…'}
           inputMode="url"
           autoCapitalize="off"
           autoCorrect="off"
@@ -80,8 +80,17 @@ export default function JoinForm({ code, onJoined, submitLabel = 'Send it in', d
           enterKeyHint="go"
         />
         <p className="tiny">
-          It has to be public. In Spotify: playlist → <strong>⋯</strong> → Edit details →
-          Public.
+          {MOCK ? (
+            <>
+              Mock mode: nothing is read from Spotify. Any word makes its own playlist out
+              of the fake catalogue, and the same word always makes the same one.
+            </>
+          ) : (
+            <>
+              It has to be public. In Spotify: playlist → <strong>⋯</strong> → Edit details
+              → Public.
+            </>
+          )}
         </p>
       </div>
 

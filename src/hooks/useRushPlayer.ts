@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { MOCK } from '@/lib/client';
 
 /**
  * Rush's playback, over whichever source the deal produced.
@@ -299,6 +300,16 @@ export function useRushPlayer(): RushPlayer {
   // Build the hidden player once, on mount, so the first deal doesn't pay for
   // the script download with the clock running.
   useEffect(() => {
+    // Mock mode never resolves a video id (lib/ytmusic.ts), so the video
+    // backend has nothing to play and the script fetch is a request to
+    // youtube.com that a laptop on a train would sit waiting on. Skipping it
+    // lands on exactly the state that failure lands on: every song plays its
+    // preview, which offline is synthesised and starts at its own first bar.
+    if (MOCK) {
+      ytFailedRef.current = true;
+      return;
+    }
+
     let alive = true;
 
     const host = makeHost();

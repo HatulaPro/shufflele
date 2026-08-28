@@ -47,7 +47,12 @@ export type Track = {
   contributor: string;
 };
 
-export type LobbyMode = 'classic' | 'rush';
+export const LOBBY_MODES = ['classic', 'rush'] as const;
+export type LobbyMode = (typeof LOBBY_MODES)[number];
+
+export function isLobbyMode(value: unknown): value is LobbyMode {
+  return typeof value === 'string' && (LOBBY_MODES as readonly string[]).includes(value);
+}
 
 export type Player = {
   id: string;
@@ -90,8 +95,24 @@ export type Lobby = {
    * lobbies stored before this was recorded.
    */
   hostPlayerId?: string | null;
-  /** 0 while nobody has started a round yet. */
+  /**
+   * 0 while nobody has started a round yet. Monotonic: it counts the songs this
+   * lobby has put on air and never goes back down, including while the host is
+   * sitting in the lobby between them.
+   */
   currentRound: number;
+  /**
+   * The round the host screen is *inside*, so a refresh mid-song lands back on
+   * it. Null means they're in the lobby, which `currentRound` cannot say on its
+   * own — it stays set once a song has played, and reading it as "on screen"
+   * is what would bounce a host straight back into a song they just left.
+   *
+   * The exact counterpart of `rush` below: both mean "this mode has a screen
+   * open", both are cleared on the way back to the lobby, and switching mode
+   * clears whichever one is set. Leaving a classic round is final for that
+   * round — the next start draws a new song (usually the prefetched one).
+   */
+  activeRound: number | null;
   /** Secret tracks already used, so a lobby never repeats a song. */
   usedTrackIds: string[];
   /** Tracks with no usable iTunes preview — skipped by future picks. */
@@ -203,6 +224,18 @@ export type RushTimeControl = 60 | 120 | null;
  * node:crypto and the lobby store, so a client component cannot import from it.
  */
 export const RUSH_BONUS_MS = 2000;
+
+/**
+ * Songs a pool needs before Rush will deal from it — one full board. A
+ * half-empty board is a giveaway, and a pool of one is a row that's correct
+ * every time.
+ *
+ * Here rather than in lib/rush.ts for the same reason as the bonus above: the
+ * lobby screen greys the Rush option out below this number, and lib/rush.ts
+ * pulls in node:crypto and the lobby store, so a client component cannot
+ * import from it.
+ */
+export const MIN_RUSH_POOL = 8;
 
 /** A finished song, as the finish screen lists it. */
 export type RushSongRef = {
@@ -400,6 +433,8 @@ export type PublicLobby = {
   /** Only what the round in play draws from — a joiner's tracks aren't counted yet. */
   trackCount: number;
   currentRound: number;
+  /** Non-null while a classic song is on the host's screen — the resume path. */
+  activeRound: number | null;
   canStart: boolean;
   /** A Rush game exists — the host screen resumes into it, finish screen included. */
   rushActive: boolean;

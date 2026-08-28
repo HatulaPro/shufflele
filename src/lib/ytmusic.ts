@@ -1,3 +1,4 @@
+import { mockEnabled } from './mock';
 import { coreTitle, looseSimilarity, normalize, plainTitle } from './normalize';
 import { keys, redis, YT_VIDEO_MISS_TTL_SECONDS, YT_VIDEO_TTL_SECONDS } from './redis';
 import type { Track } from './types';
@@ -295,6 +296,13 @@ async function search(term: string): Promise<Row[]> {
  * deal would spend the run's clock discovering that.
  */
 export async function findFullTrackVideo(track: Track): Promise<string | null> {
+  // Nothing to mock: a video id is only useful to YouTube's own iframe, and a
+  // fabricated one would put the player on a dead embed. Null is the answer
+  // this function already gives when it finds nothing, and Rush's fallback
+  // takes over — which offline is the right sound anyway, since a synthesised
+  // preview starts at its own first bar rather than mid-song.
+  if (mockEnabled()) return null;
+
   const cacheKey = keys.ytVideo(track.spotifyId);
 
   try {
