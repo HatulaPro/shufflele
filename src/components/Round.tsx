@@ -14,9 +14,9 @@ type Props = {
   n: number;
   starting: boolean;
   startError: string | null;
+  closing: boolean;
   onNext: () => void;
-  /** Back to the lobby, leaving this song behind. See `activeRound` in lib/types.ts. */
-  onLeave: () => void;
+  onClose: () => void;
 };
 
 /**
@@ -50,8 +50,9 @@ export default function Round({
   n,
   starting,
   startError,
+  closing,
   onNext,
-  onLeave,
+  onClose,
 }: Props) {
   const [round, setRound] = useState<PublicRound | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -188,21 +189,17 @@ export default function Round({
   );
 
   /**
-   * Walking out mid-song is the one exit worth a question, because the song
-   * does not come back: the lobby keeps its place in the count and the next
-   * start draws a new one. Off the result screen there is nothing to lose and
-   * the same trip is a plain button.
-   *
-   * Ending the whole game is no longer one of the answers here — that lives in
-   * the lobby now, which is where this button goes.
+   * Leaving a song is nearly always "give me a different one", so the exit asks
+   * that first. The other way out ends the game: the lobby is closed and the
+   * phone goes back to the home screen.
    */
   const leavePrompt = leaving && (
     <div className="modal modal--confirm" role="dialog" aria-modal="true" aria-label="Leave song">
       <div className="card stack">
-        <h2 className="h1">Leave this song?</h2>
-        <p className="muted">It won&rsquo;t come back — the next one is a fresh pick.</p>
-        <button className="btn btn--ghost btn--block" onClick={onLeave}>
-          Yeah, back to the lobby
+        <h2 className="h1">That's it?</h2>
+        <p className="muted">GGs I guess</p>
+        <button className="btn btn--ghost btn--block" onClick={onClose} disabled={closing}>
+          {closing ? 'Ending…' : 'Yeah, end the game'}
         </button>
         <button className="btn btn--quiet btn--block" onClick={() => setLeaving(false)}>
           Keep playing
@@ -288,7 +285,7 @@ export default function Round({
           onClick={askToLeave}
           style={{ marginTop: 'auto' }}
         >
-          Leave song
+          End game
         </button>
 
         {leavePrompt}
@@ -313,8 +310,8 @@ export default function Round({
           <button className="btn btn--primary btn--block" onClick={onNext} disabled={starting}>
             {starting ? 'Picking…' : 'Try another song'}
           </button>
-          <button className="btn btn--quiet btn--block" onClick={onLeave}>
-            Back to lobby
+          <button className="btn btn--quiet btn--block" onClick={askToLeave}>
+            End game
           </button>
         </div>
 
@@ -391,8 +388,8 @@ export default function Round({
           <button className="btn btn--primary btn--block" onClick={onNext} disabled={starting}>
             {starting ? 'Picking…' : 'Next song'}
           </button>
-          <button className="btn btn--quiet btn--block" onClick={onLeave}>
-            Back to lobby
+          <button className="btn btn--quiet btn--block" onClick={askToLeave}>
+            End game
           </button>
         </div>
 
@@ -407,10 +404,8 @@ export default function Round({
   return (
     <main className="shell">
       <div className="row-between">
-        {/* "Leave", not "Lobby": the button on the right opens the roster
-            without touching the song, and this one walks out of it. */}
         <button className="btn btn--quiet" onClick={askToLeave}>
-          Leave
+          End game
         </button>
         <div className="row-tight">
           {lobbyButton}

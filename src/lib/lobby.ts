@@ -28,7 +28,6 @@ export async function createLobby(mode: LobbyMode = 'classic'): Promise<Lobby> {
       mode,
       players: [],
       currentRound: 0,
-      activeRound: null,
       usedTrackIds: [],
       unusableTrackIds: [],
     };
@@ -104,20 +103,11 @@ export function poolFor(lobby: Lobby, pool: Track[], n: number): Track[] {
 }
 
 /**
- * The round the roster is judged against: the classic song actually on screen,
- * or — when the host is back in the lobby, which is also where a Rush run is
- * started from — the next one to go on air.
- *
- * Not `max(currentRound, 1)`. That reads the roster against the song that just
- * finished, which was right while the host could never be anywhere but inside a
- * round, and stopped being right the moment they could walk back out to the
- * lobby and start something else: it counts a departing player's tracks into
- * the pool the next game draws from, and leaves a player who joined during the
- * last song showing as still waiting when the very next thing to start already
- * includes them.
+ * The round the lobby screen judges the roster against: the one in play, or the
+ * first one when nothing has started yet.
  */
 export function liveRound(lobby: Lobby): number {
-  return lobby.activeRound ?? lobby.currentRound + 1;
+  return Math.max(lobby.currentRound, 1);
 }
 
 /**
@@ -194,31 +184,6 @@ export async function settleRoster(lobby: Lobby, n: number): Promise<Track[]> {
   return poolFor(lobby, pool, n);
 }
 
-/**
- * Moves a lobby to the other game mode, in place.
- *
- * Everything that makes a lobby a lobby is shared — the code, the host token,
- * the roster and the pooled tracks — so switching is only ever a matter of
- * closing whichever mode currently has a screen open. That is deliberately the
- * one destructive part: a Rush run is a live clock against an absolute
- * deadline, so it cannot be left half-played and picked up later, and a classic
- * round the host has walked out of is spent (see `activeRound` in lib/types.ts).
- *
- * What survives is everything both modes read: the pool, the roster, the two
- * used/unusable lists — which are already kept apart per mode — and any round
- * prefetched while the last song played, still sitting unclaimed under
- * `currentRound + 1` for whenever classic comes back to it.
- *
- * A no-op when the lobby is already in `mode`, so a double-tap costs nothing.
- */
-export function switchMode(lobby: Lobby, mode: LobbyMode): boolean {
-  if (lobby.mode === mode) return false;
-  lobby.mode = mode;
-  lobby.activeRound = null;
-  lobby.rush = null;
-  return true;
-}
-
 export function toPublicLobby(lobby: Lobby, isHost: boolean): PublicLobby {
   const n = liveRound(lobby);
   const roster = rosterFor(lobby, n);
@@ -239,7 +204,6 @@ export function toPublicLobby(lobby: Lobby, isHost: boolean): PublicLobby {
     })),
     trackCount,
     currentRound: lobby.currentRound,
-    activeRound: lobby.activeRound,
     canStart: trackCount > 0,
     rushActive: lobby.rush != null,
   };

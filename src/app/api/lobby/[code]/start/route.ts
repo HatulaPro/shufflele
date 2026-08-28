@@ -47,14 +47,6 @@ export async function POST(_req: NextRequest, ctx: Ctx): Promise<NextResponse> {
   if (!auth.ok) return fail(auth.error, auth.status);
   const lobby = auth.lobby;
 
-  // The mirror of the rush start route's guard. Both modes share one lobby now,
-  // so "which game is this" is a question about the lobby's current setting
-  // rather than about how it was created — and a host tapping start just as
-  // another tab flips the mode is a race worth answering plainly.
-  if (lobby.mode === 'rush') {
-    return fail('This lobby is set to rush right now. Switch back to classic first.', 409);
-  }
-
   const n = lobby.currentRound + 1;
 
   // The one place the roster moves. Anyone added while the last song was on air
@@ -71,7 +63,6 @@ export async function POST(_req: NextRequest, ctx: Ctx): Promise<NextResponse> {
       // The track's turn is spent now, on air, not at prefetch time — a
       // prefetch that never airs must not count against its contributor.
       lobby.currentRound = n;
-      lobby.activeRound = n;
       lobby.usedTrackIds.push(prefetched.secret.spotifyId);
       await saveLobby(lobby);
       return json({ n });
@@ -114,7 +105,6 @@ export async function POST(_req: NextRequest, ctx: Ctx): Promise<NextResponse> {
   }
 
   lobby.currentRound = n;
-  lobby.activeRound = n;
   lobby.usedTrackIds.push(result.round.secret.spotifyId);
   await saveLobby(lobby);
 

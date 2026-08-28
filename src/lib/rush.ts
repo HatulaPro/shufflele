@@ -4,7 +4,7 @@ import { loadLobby, loadTracks, poolFor, saveLobby } from './lobby';
 import { artistsLabel } from './round';
 import { pickSecret } from './select';
 import { findFullTrackVideo } from './ytmusic';
-import { MIN_RUSH_POOL, RUSH_BONUS_MS } from './types';
+import { RUSH_BONUS_MS } from './types';
 import type {
   Lobby,
   PublicRush,
@@ -42,11 +42,14 @@ import type {
  */
 
 export const MAX_RUSH_LIVES = 3;
-/** The board. Kept in step with `MIN_RUSH_POOL` — a board is exactly one pool's
-    worth of rows, which is why the minimum is the board size and not a number
-    of its own. */
-const OPTIONS_COUNT = MIN_RUSH_POOL;
+const OPTIONS_COUNT = 8;
 const MAX_PICK_ATTEMPTS = 8;
+
+/**
+ * A half-empty board is a giveaway, and a pool of one is a row that's correct
+ * every time — free score forever. Rush wants a full board to start with.
+ */
+export const MIN_RUSH_POOL = OPTIONS_COUNT;
 
 /** Below this the board stops being a guess at all, so the run ends instead. */
 const MIN_LIVE_POOL = 2;
@@ -320,8 +323,7 @@ export async function warmNextRushSong(code: string): Promise<void> {
     const rush = lobby?.rush;
     if (!lobby || !rush || rush.next || rushOver(rush)) return;
 
-    // The same round the run was dealt from — see the start route.
-    const pool = poolFor(lobby, await loadTracks(code), lobby.currentRound + 1);
+    const pool = poolFor(lobby, await loadTracks(code), Math.max(lobby.currentRound, 1));
     const { deal, unusable, previewless } = await buildDeal(
       rush,
       rushCandidates(pool, lobby.rushUnusableTrackIds ?? []),

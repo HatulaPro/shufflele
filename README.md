@@ -41,11 +41,6 @@ Then open the app on the host phone, tap **Create lobby**, and read the six digi
 Guests open the join link, give a name and paste a link to a public playlist of theirs; the pool
 is everyone's music mixed together. **Start game** lights up once one playlist is in.
 
-The host screen is the lobby, and every screen inside a game leads back to it: **Back to lobby**
-off the end of a song or a Rush run, and off the middle of one too, behind a confirmation, since
-a song walked out of does not come back. Closing the lobby for good — freeing the code — is the
-**End game** button on the lobby screen itself, one step further out than any of them.
-
 The door stays open all game. Someone who turns up at song five joins the same way, and the
 **Lobby** button on the host's screen shows who is in, how much music each of them put in, and
 the code to read out again — plus a way to remove anyone but the host, whose phone is running
@@ -240,16 +235,7 @@ webhook in production. Set `REPLICATE_POLL_FALLBACK=0` to turn it off.
 
 ### Rush mode
 
-Creating a lobby asks for a mode first, and the lobby screen can change it afterwards. A room
-that wants to switch keeps its code, its players and its pooled music — nobody re-joins, nobody
-pastes a playlist again — because a mode is a setting on a lobby and never was the thing that
-made two lobbies different. All a switch ends is the screen the other mode had open: a Rush run
-runs against a wall-clock deadline and cannot be picked up an hour later, and a classic song the
-host has walked out of is spent either way. Everything both modes read survives it, including
-the two used/unusable lists, which are kept apart per mode precisely because a track that is
-dead to one is routinely fine in the other.
-
-**Classic** is everything above; **Rush** is a
+Creating a lobby now asks for a mode first. **Classic** is everything above; **Rush** is a
 beat-the-clock sprint for whoever is holding the host phone: songs play from t=0 (no Demucs, no
 stems, no daily cap — a song costs a couple of metadata lookups and nothing else), and the
 player clicks the one that's playing out of eight candidates drawn from the pooled playlists. Three lives; a miss costs one and moves straight on; a hit scores and moves straight
@@ -259,8 +245,7 @@ Song selection reuses `pickSecret` — least-served contributor first, popularit
 their tracks — whenever more than one playlist is in the pool, and drops to fully uniform when
 there's only one, where the fairness machinery has nobody to be fair to. Songs may repeat; over
 a minute-long clock an exclusion list would only be state to forget. Rush needs eight different
-songs in the pool to fill a board — below that the lobby screen greys the mode out rather than
-letting the host find out by tapping start — and tracks with no preview are retired into the lobby's
+songs in the pool to fill a board, and tracks with no preview are retired into the lobby's
 unusable list on the way past, exactly as classic rounds retire them. Which of the ten options is
 the answer never leaves the server, same rule as the classic guess route — the phone is playing
 in front of a room. The high score lives in localStorage on the host phone, per time control,

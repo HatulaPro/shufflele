@@ -1052,16 +1052,6 @@ a {
   transition: background 0.12s ease, color 0.12s ease;
 }
 
-/* The mode toggle. Two rows rather than the time control's three. */
-.seg--two {
-  grid-template-columns: repeat(2, 1fr);
-}
-
-.seg__btn:disabled {
-  opacity: 0.42;
-  cursor: not-allowed;
-}
-
 .seg__btn--inf {
   font-size: 22px;
   line-height: 1;
