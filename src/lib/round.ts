@@ -1,4 +1,4 @@
-import { artistKey } from './normalize';
+import { artistKey, normalize } from './normalize';
 import {
   PLAYABLE_STEMS,
   STEM_LABEL,
@@ -38,11 +38,39 @@ export type TierResult = { tier: GuessTier; contributor: string | null };
  * `pool` may hold the same track more than once (two players, one song), so
  * every entry for the guessed id is considered.
  */
+/**
+ * Identity for "same song" across releases. Two tracks are the same song when
+ * their normalised title and artist line up exactly — a remaster, a single vs.
+ * album cut, or an explicit vs. clean release is the same song even though
+ * Spotify gives each a different id. This is the key the guess candidate list
+ * is deduped on, and the one `tierFor` scores "correct" by, so a collapsed
+ * twin picked from the modal still wins instead of reading as a near-miss.
+ *
+ * A NUL surrogate sits between the two halves so the joined string can't
+ * collide with a different title/artist split ("ab | c" vs "a | bc").
+ */
+export function songKey(title: string, artist: string): string {
+  return `${normalize(title)}\u0000${normalize(artist)}`;
+}
+
+export function trackSongKey(track: Track): string {
+  return songKey(track.title, artistsLabel(track));
+}
+
 export function tierFor(guessedId: string, secret: Track, pool: Track[]): TierResult | null {
   const entries = pool.filter((t) => t.spotifyId === guessedId);
   if (entries.length === 0) return null;
 
-  if (guessedId === secret.spotifyId) return { tier: 'correct', contributor: null };
+  // A correct guess is the secret by id, or — because the candidate list
+  // collapses releases sharing a title and artist — any twin of it. The kept
+  // representative id is not always the secret's own, but it is the same song,
+  // so it must still score as a win rather than burn a row as an artist miss.
+  if (
+    guessedId === secret.spotifyId ||
+    entries.some((e) => trackSongKey(e) === trackSongKey(secret))
+  ) {
+    return { tier: 'correct', contributor: null };
+  }
 
   const secretArtist = secret.artists[0] ? artistKey(secret.artists[0]) : null;
   if (
