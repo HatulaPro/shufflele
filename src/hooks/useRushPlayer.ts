@@ -283,6 +283,8 @@ export function useRushPlayer(): RushPlayer {
       }
       const audio = getAudio();
       if (audio.src !== source.previewUrl) audio.src = source.previewUrl;
+      // Undoes `unlock`'s silent priming; a no-op on every other path here.
+      audio.muted = false;
       audio.currentTime = 0;
       // Autoplay policies can still refuse after all our taps — a reload
       // mid-run, mostly. The play button on the bar is the escape hatch.
@@ -493,6 +495,11 @@ export function useRushPlayer(): RushPlayer {
       if (source.previewUrl) {
         const audio = getAudio();
         audio.src = source.previewUrl;
+        // Muted for the same reason the player above is: the priming call has
+        // to be a real `play()` inside the gesture, and `pause()` cannot land
+        // until playback has actually begun — so an unmuted clip gives the
+        // song away during the countdown. `playPreview` unmutes at "Go!".
+        audio.muted = true;
         audio
           .play()
           .then(() => {
