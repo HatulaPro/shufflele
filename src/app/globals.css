@@ -1194,8 +1194,8 @@ a {
 }
 
 .rush-board .track-row__index {
-  font-size: 12px;
-  min-width: 12px;
+  font-size: 14px;
+  min-width: 14px;
 }
 
 .rush-board .track-row__art {
@@ -1247,7 +1247,7 @@ a {
 .track-row__index {
   flex: none;
   min-width: 14px;
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 650;
   font-variant-numeric: tabular-nums;
   color: var(--muted);
@@ -1283,6 +1283,17 @@ a {
 .track-row--wrong .track-row__index {
   color: inherit;
   opacity: 0.7;
+}
+
+/*
+ * The troll round's row (lib/trollEmoji). Emoji ignore `color` and read small
+ * beside a digit at the same size, so this one gets its own nudge and drops the
+ * tabular-nums slot that would clip it.
+ */
+.track-row__index--troll {
+  font-size: 1.15em;
+  font-variant-numeric: normal;
+  line-height: 1;
 }
 
 /* Stands in for the album art on the row that was just tapped. */

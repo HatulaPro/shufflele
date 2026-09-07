@@ -1,8 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRushPlayer } from '@/hooks/useRushPlayer';
 import { ApiError, api } from '@/lib/client';
+import { pickTroll } from '@/lib/trollEmoji';
 import { RUSH_BONUS_MS } from '@/lib/types';
 import type { PublicRush, RushSongRef } from '@/lib/types';
 
@@ -84,6 +85,19 @@ export default function RushGame({ code, closing, onClose, onBack }: Props) {
   const [newBest, setNewBest] = useState(false);
   /** Set on a correct guess so the clock bonus is visible; clears itself. */
   const [bonus, setBonus] = useState(false);
+  /**
+   * The rows on screen: the live board, or the one held under a verdict flash.
+   * `frozen` is set to the very array it freezes, so this keeps its identity
+   * across the flash and the troll below stays put while the verdict plays.
+   */
+  const board = frozen ?? rush?.options ?? null;
+  /**
+   * The occasional row that wears an emoji instead of its number, rolled once
+   * per board rather than per render — a fresh roll on every paint would
+   * flicker a different emoji onto a different row several times a second.
+   * Null on almost every board, which is the whole idea. See lib/trollEmoji.
+   */
+  const troll = useMemo(() => (board ? pickTroll(board) : null), [board]);
   /**
    * Server clock minus this device's clock. `endsAt` is stamped in server
    * time, so counting down against a raw `Date.now()` is wrong by whatever the
@@ -648,6 +662,8 @@ export default function RushGame({ code, closing, onClose, onBack }: Props) {
     (rush.endsAt !== null ? rush.endsAt - serverNow() : (rush.timeControl ?? 0) * 1000);
   /** Last ten seconds get the pulse — the clock is the thing you must not miss. */
   const urgent = !infinite && msLeft <= 10_000;
+  /** Non-null from here down: `rush` is guarded above, so `board` came off it. */
+  const rows = board ?? rush.options;
 
   return (
     <main className="shell">
@@ -691,7 +707,7 @@ export default function RushGame({ code, closing, onClose, onBack }: Props) {
       {error && <p className="notice notice--error">{error}</p>}
 
       <div className="rush-board">
-        {(frozen ?? rush.options).map((option, index) => {
+        {rows.map((option, index) => {
           const hit = flash?.trackId === option.spotifyId ? flash.kind : null;
           return (
           <button
@@ -700,8 +716,11 @@ export default function RushGame({ code, closing, onClose, onBack }: Props) {
             onClick={() => guess(option.spotifyId)}
             disabled={frozen !== null}
           >
-            <span className="track-row__index" aria-hidden>
-              {index + 1}
+            <span
+              className={`track-row__index${troll?.index === index ? ' track-row__index--troll' : ''}`}
+              aria-hidden
+            >
+              {troll?.index === index ? troll.emoji : index + 1}
             </span>
             {hit ? (
               <span className="track-row__art track-row__verdict" aria-hidden>
