@@ -84,7 +84,6 @@ export const TROLL_EMOJI: Record<string, string> = {
   war: '⚔️',
   blood: '🩸',
   fight: '🥊',
-  soldier: '🎖️',
   dance: '💃',
   dream: '💭',
   king: '👑',
