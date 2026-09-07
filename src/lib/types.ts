@@ -202,7 +202,7 @@ export type RushTimeControl = 60 | 120 | null;
  * play screen to label the bump beside the score — and lib/rush.ts pulls in
  * node:crypto and the lobby store, so a client component cannot import from it.
  */
-export const RUSH_BONUS_MS = 2000;
+export const RUSH_BONUS_MS = 3000;
 
 /** A finished song, as the finish screen lists it. */
 export type RushSongRef = {

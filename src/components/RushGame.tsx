@@ -377,7 +377,7 @@ export default function RushGame({ code, closing, onClose, onBack }: Props) {
       }, FLASH_MS);
 
       // Only when there is a clock to have been extended: an endless run
-      // scores the same but has no deadline, so a "+2s" there would be a lie.
+      // scores the same but has no deadline, so a "+3s" there would be a lie.
       if (hit && rush.endsAt !== null) {
         if (bonusTimer.current) clearTimeout(bonusTimer.current);
         setBonus(true);
