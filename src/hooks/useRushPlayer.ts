@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { MOCK } from '@/lib/client';
+import { holdMediaSession, releaseMediaSession } from '@/lib/mediaSession';
 
 /**
  * Rush's playback, over whichever source the deal produced.
@@ -397,6 +398,7 @@ export function useRushPlayer(): RushPlayer {
 
     return () => {
       alive = false;
+      releaseMediaSession();
       ytReadyRef.current = false;
       try {
         ytRef.current?.destroy();
@@ -415,6 +417,7 @@ export function useRushPlayer(): RushPlayer {
   }, [clearPending, loadVideo, playPreview, usableVideo]);
 
   const stop = useCallback(() => {
+    releaseMediaSession();
     const audio = audioRef.current;
     if (audio) {
       audio.pause();
@@ -438,6 +441,9 @@ export function useRushPlayer(): RushPlayer {
       stop();
       liveRef.current = true;
       currentRef.current = source;
+      // Before either backend makes a sound, so the notification the sound
+      // raises is described by this page rather than by the embed.
+      holdMediaSession();
 
       const videoId = usableVideo(source);
       if (!videoId) {
@@ -478,6 +484,9 @@ export function useRushPlayer(): RushPlayer {
     (source: RushSource) => {
       setBlocked(false);
       liveRef.current = false;
+      // The priming plays below are real playback as far as the browser is
+      // concerned, and can raise the notification during the countdown.
+      holdMediaSession();
       // Priming failures land in `onError`, which needs to know which song it
       // is retiring.
       currentRef.current = source;
