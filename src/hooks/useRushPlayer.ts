@@ -238,6 +238,22 @@ export function useRushPlayer(): RushPlayer {
    * put the song on air — pausing then would kill the run in silence.
    */
   const liveRef = useRef(false);
+  /**
+   * A load has been issued that is meant to be heard, and the player is still
+   * muted waiting for it.
+   *
+   * Sound is never turned on at the moment a video is *asked* for, only once
+   * the player reports it playing — see `onStateChange`. Everything in between
+   * is somebody else's audio: the song that was on air a moment ago, still
+   * sounding while `stopVideo` crosses into the frame, or the position the
+   * previous load left the player at, which `loadVideoById` can let through
+   * before it seeks to `startSeconds`. Both used to arrive unmuted, which is
+   * the burst you hear ahead of a song.
+   *
+   * Consumed by the first PLAYING after the load, so a second load landing on
+   * top of the first re-arms it rather than stacking.
+   */
+  const unmuteOnPlayRef = useRef(false);
 
   // One audio element for the whole run; each fallback song swaps the src.
   const getAudio = useCallback(() => {
@@ -273,8 +289,14 @@ export function useRushPlayer(): RushPlayer {
       // is reached from `onError` too, where the video is only *probably* not
       // making a sound.
       loadedVideoRef.current = null;
+      unmuteOnPlayRef.current = false;
       if (ytReadyRef.current) {
         try {
+          // Muted as well as stopped. `stopVideo` is a message to another
+          // origin's frame and takes effect whenever that frame gets to it;
+          // the mute rides in front of it so the tail of whatever was playing
+          // cannot be heard over the clip going on air here.
+          ytRef.current?.mute();
           ytRef.current?.stopVideo();
         } catch {
           // Torn down mid-run; nothing to stop.
@@ -329,6 +351,14 @@ export function useRushPlayer(): RushPlayer {
           playerVars: {
             controls: 0,
             disablekb: 1,
+            // Born muted, so there is no window in which an unmuted player can
+            // be handed a video. `mute()` on a player that has never loaded one
+            // has nothing underneath it to apply to and is quietly dropped —
+            // which is why the first song of a tab, and only the first, used to
+            // play out loud through the countdown that was meant to hide it.
+            // Every unmute from here on is deliberate: `onStateChange` makes
+            // them, once it has a playing video to make them about.
+            mute: 1,
             // Without this iOS takes the video fullscreen the moment it plays.
             playsinline: 1,
             modestbranding: 1,
@@ -349,7 +379,8 @@ export function useRushPlayer(): RushPlayer {
                 playPreview(queued);
                 return;
               }
-              ytRef.current?.unMute();
+              // Deferred to `onStateChange`, exactly as in `play`.
+              unmuteOnPlayRef.current = true;
               loadVideo(videoId);
               ytRef.current?.playVideo();
             },
@@ -382,10 +413,29 @@ export function useRushPlayer(): RushPlayer {
               if (liveRef.current) playPreview(source);
               else loadedVideoRef.current = null;
             },
-            // 1 is PLAYING. Sound is provably coming out, so retire the manual
-            // play chip whatever an earlier error or refusal implied.
+            // 1 is PLAYING: the player is provably running, which settles
+            // both of the questions this hook defers to it.
+            //
+            // The chip, because sound is coming out whatever an earlier error
+            // or refusal implied — and the unmute, because this is the first
+            // moment the thing about to be heard is known to be the video that
+            // was asked for, playing from its own beginning, rather than the
+            // handover on either side of it. Everything that puts a video up
+            // arms `unmuteOnPlayRef` and leaves the player muted; this is what
+            // spends it.
             onStateChange: (event) => {
-              if (event.data === PLAYING) setBlocked(false);
+              if (event.data !== PLAYING) return;
+              setBlocked(false);
+              // `liveRef` because the countdown's priming play reaches PLAYING
+              // too, and turning sound on for that one is the leak this whole
+              // arrangement exists to close.
+              if (!unmuteOnPlayRef.current || !liveRef.current) return;
+              unmuteOnPlayRef.current = false;
+              try {
+                ytRef.current?.unMute();
+              } catch {
+                // Torn down between the load and the report.
+              }
             },
           },
         });
@@ -425,14 +475,26 @@ export function useRushPlayer(): RushPlayer {
     const audio = audioRef.current;
     if (audio) {
       audio.pause();
+      // Muted as well as paused, because `play` hands this element straight
+      // back to `playPreview` and a `pause` that lands late would otherwise
+      // land on an element that is audible again. `playPreview` unmutes it
+      // once it has a clip of its own playing.
+      audio.muted = true;
       audio.removeAttribute('src');
     }
     clearPending();
     currentRef.current = null;
     loadedVideoRef.current = null;
     liveRef.current = false;
+    unmuteOnPlayRef.current = false;
     if (ytReadyRef.current) {
       try {
+        // The mute goes first and the stop behind it. Both are messages into
+        // another origin's frame, so neither takes effect on the line it is
+        // written on — but they arrive in the order they are sent, and the
+        // player is silent from the moment the first one lands rather than
+        // from the moment the video is actually torn down.
+        ytRef.current?.mute();
         ytRef.current?.stopVideo();
       } catch {
         // Torn down mid-run; nothing to stop.
@@ -458,9 +520,14 @@ export function useRushPlayer(): RushPlayer {
       }
 
       if (ytReadyRef.current && ytRef.current) {
-        // `unlock` leaves the player muted so its priming play can't leak
-        // over the countdown. This is the moment sound is actually wanted.
-        ytRef.current.unMute();
+        // Sound is wanted, but not yet: the player is left muted by `stop`
+        // above and `onStateChange` turns it on once this load reports itself
+        // playing. Unmuting here instead — on the line that *asks* for the
+        // video — uncovers everything between the ask and the answer: the song
+        // that was on air a moment ago, still sounding while the stop crosses
+        // into the frame, and whatever position the player was left at before
+        // `loadVideoById` seeks to `startSeconds`.
+        unmuteOnPlayRef.current = true;
         loadVideo(videoId);
         ytRef.current.playVideo();
         return;
@@ -509,7 +576,9 @@ export function useRushPlayer(): RushPlayer {
           // Left muted on purpose. `pauseVideo` can arrive while the player is
           // still buffering and simply be ignored, and a stray unmuted bar
           // during the countdown gives the answer away before the clock even
-          // starts. `play` unmutes at "Go!".
+          // starts. Nothing here arms `unmuteOnPlayRef`, so the PLAYING this
+          // provokes passes through `onStateChange` without turning sound on;
+          // the run goes audible at "Go!", one load later.
           ytRef.current.mute();
           loadVideo(videoId);
           ytRef.current.playVideo();
