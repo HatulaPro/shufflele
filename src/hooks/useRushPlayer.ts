@@ -2,7 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { MOCK } from '@/lib/client';
-import { holdMediaSession, releaseMediaSession } from '@/lib/mediaSession';
+import {
+  endMediaSession,
+  holdMediaSession,
+  releaseMediaSession,
+} from '@/lib/mediaSession';
 
 /**
  * Rush's playback, over whichever source the deal produced.
@@ -398,7 +402,7 @@ export function useRushPlayer(): RushPlayer {
 
     return () => {
       alive = false;
-      releaseMediaSession();
+      endMediaSession();
       ytReadyRef.current = false;
       try {
         ytRef.current?.destroy();
@@ -442,7 +446,9 @@ export function useRushPlayer(): RushPlayer {
       liveRef.current = true;
       currentRef.current = source;
       // Before either backend makes a sound, so the notification the sound
-      // raises is described by this page rather than by the embed.
+      // raises is described by this page rather than by the embed. `stop`
+      // above only defers the anchor's teardown, so a song dealt straight
+      // after another keeps the one that is already playing.
       holdMediaSession();
 
       const videoId = usableVideo(source);
@@ -485,7 +491,9 @@ export function useRushPlayer(): RushPlayer {
       setBlocked(false);
       liveRef.current = false;
       // The priming plays below are real playback as far as the browser is
-      // concerned, and can raise the notification during the countdown.
+      // concerned, and can raise the notification during the countdown. This
+      // is also the gesture the silent anchor needs: it starts here, ahead of
+      // the embed's own player, and plays under the rest of the run.
       holdMediaSession();
       // Priming failures land in `onError`, which needs to know which song it
       // is retiring.
